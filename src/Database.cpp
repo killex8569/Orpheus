@@ -1,8 +1,9 @@
 #include "Database.h"
 
 #include <QDateTime>
-#include <algorithm>
 #include <QDebug>
+#include <QLocale>
+#include <algorithm>
 #include <QSqlError>
 #include <QSqlQuery>
 
@@ -29,7 +30,9 @@ QVariantMap Playlist::toMap() const
             {"trackCount", trackCount},
             {"readyCount", readyCount},
             {"totalDuration", totalDuration},
-            {"durationText", formatTime(totalDuration)}};
+            {"durationText", formatTime(totalDuration)},
+            {"diskSize", diskSize},
+            {"diskSizeText", QLocale().formattedDataSize(diskSize)}};
 }
 
 QVariantMap ImportJob::toMap() const
@@ -471,7 +474,8 @@ QList<Playlist> Database::playlists() const
 {
     QSqlQuery q = exec(db(),
                        "SELECT p.id, p.name, p.kind, p.source_ref, p.created_at, COUNT(t.id), "
-                       " COALESCE(SUM(t.state = 'ready'), 0), COALESCE(SUM(t.duration), 0) "
+                       " COALESCE(SUM(t.state = 'ready'), 0), COALESCE(SUM(t.duration), 0), "
+                       " COALESCE(SUM(CASE WHEN t.state = 'ready' THEN t.file_size END), 0) "
                        "FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id "
                        "LEFT JOIN tracks t ON t.id = pt.track_id "
                        "GROUP BY p.id ORDER BY p.kind != 'cache', p.name COLLATE NOCASE");
@@ -486,6 +490,7 @@ QList<Playlist> Database::playlists() const
         p.trackCount = q.value(5).toInt();
         p.readyCount = q.value(6).toInt();
         p.totalDuration = q.value(7).toDouble();
+        p.diskSize = q.value(8).toLongLong();
         out.append(p);
     }
     return out;

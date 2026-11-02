@@ -19,6 +19,7 @@ struct Playlist {
     int trackCount = 0;
     int readyCount = 0;
     double totalDuration = 0;
+    qint64 diskSize = 0;  // octets des morceaux de la playlist présents en local
     QVariantMap toMap() const;
 };
 

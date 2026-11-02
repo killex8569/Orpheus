@@ -87,6 +87,72 @@ ScrollView {
         }
 
         Card {
+            id: storageCard
+            // Playlists triées de la plus lourde à la plus légère.
+            readonly property var rows: backend.playlists.slice().sort((a, b) => b.diskSize - a.diskSize)
+            readonly property real maxSize: rows.length > 0 ? Math.max(1, rows[0].diskSize) : 1
+            title: "Stockage des playlists"
+            subtitle: rows.length + " playlist" + (rows.length > 1 ? "s" : "") + " · total sur le disque : <b>" + backend.cacheInfo + "</b>"
+                      + "<br>Un morceau présent dans plusieurs playlists n'occupe le disque qu'une fois : la somme des lignes peut dépasser le total."
+
+            Repeater {
+                model: storageCard.rows
+                delegate: ItemDelegate {
+                    id: srow
+                    required property var modelData
+                    Layout.fillWidth: true
+                    implicitHeight: 46
+                    hoverEnabled: true
+                    leftPadding: 8
+                    rightPadding: 8
+                    onClicked: ApplicationWindow.window.navigate("playlist", modelData.id)
+                    background: Rectangle { radius: 8; color: srow.hovered ? OTheme.hover : "transparent" }
+                    contentItem: RowLayout {
+                        spacing: 12
+                        Icon {
+                            iconName: ({ "cache": "disk", "youtube": "youtube", "spotify": "spotify" })[srow.modelData.kind] || "music"
+                            size: 16; color: OTheme.muted
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 4
+                            RowLayout {
+                                spacing: 8
+                                Text {
+                                    text: srow.modelData.name
+                                    color: OTheme.text; font.pixelSize: 14
+                                    elide: Text.ElideRight; Layout.fillWidth: true
+                                }
+                                Text {
+                                    text: srow.modelData.readyCount + " / " + srow.modelData.trackCount + " en local"
+                                    color: OTheme.muted; font.pixelSize: 12
+                                }
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 4
+                                radius: 2
+                                color: OTheme.hover
+                                Rectangle {
+                                    width: parent.width * srow.modelData.diskSize / storageCard.maxSize
+                                    height: parent.height
+                                    radius: 2
+                                    color: OTheme.accent
+                                }
+                            }
+                        }
+                        Text {
+                            text: srow.modelData.diskSizeText
+                            color: OTheme.text; font.pixelSize: 14; font.weight: Font.DemiBold
+                            horizontalAlignment: Text.AlignRight
+                            Layout.preferredWidth: 90
+                        }
+                    }
+                }
+            }
+        }
+
+        Card {
             title: "Cache local & qualité"
             subtitle: "Le meilleur flux audio de YouTube (Opus ~130-160 kb/s, 256 kb/s avec YouTube Premium) est conservé tel quel, sans réencodage. Cache actuel : " + backend.cacheInfo + "."
             Toggle { key: "auto_cache"; def: true; label: "Enregistrer les morceaux écoutés en local"

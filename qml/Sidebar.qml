@@ -104,6 +104,63 @@ Rectangle {
             }
         }
 
+        // Espace disque de la playlist actuelle : celle affichée, sinon celle en
+        // lecture, sinon la dernière ouverte.
+        Rectangle {
+            id: storage
+            readonly property var pl: {
+                const id = root.view === "playlist" ? root.playlistId
+                         : backend.playingPlaylistId > 0 ? backend.playingPlaylistId
+                         : (backend.currentPlaylist.id || 0)
+                return backend.playlists.find(p => p.id === id) || null
+            }
+            readonly property real ratio: pl && pl.trackCount > 0 ? pl.readyCount / pl.trackCount : 0
+            visible: pl !== null
+            Layout.fillWidth: true
+            Layout.topMargin: 6
+            implicitHeight: storageCol.implicitHeight + 22
+            radius: 8
+            color: OTheme.panel2
+            ToolTip.visible: storageHover.hovered
+            ToolTip.delay: 400
+            ToolTip.text: "Espace occupé sur le disque par les morceaux de cette playlist téléchargés en local."
+            HoverHandler { id: storageHover }
+            ColumnLayout {
+                id: storageCol
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 11 }
+                spacing: 5
+                RowLayout {
+                    spacing: 8
+                    Icon { iconName: "disk"; size: 14; color: OTheme.muted }
+                    Text {
+                        text: storage.pl ? storage.pl.name : ""
+                        color: OTheme.muted; font.pixelSize: 11
+                        elide: Text.ElideRight; Layout.fillWidth: true
+                    }
+                }
+                Text {
+                    text: storage.pl ? storage.pl.diskSizeText : ""
+                    color: OTheme.text; font.pixelSize: 17; font.weight: Font.DemiBold
+                }
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 4
+                    radius: 2
+                    color: OTheme.hover
+                    Rectangle {
+                        width: parent.width * storage.ratio
+                        height: parent.height
+                        radius: 2
+                        color: storage.ratio >= 1 ? OTheme.ok : OTheme.accent
+                    }
+                }
+                Text {
+                    text: storage.pl ? storage.pl.readyCount + " / " + storage.pl.trackCount + " morceaux en local" : ""
+                    color: OTheme.muted; font.pixelSize: 11
+                }
+            }
+        }
+
         // Téléchargements en cours.
         Rectangle {
             visible: backend.downloadsCount > 0

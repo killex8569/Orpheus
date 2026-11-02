@@ -180,6 +180,12 @@ private slots:
         QCOMPARE(cands.size(), 1);
         QCOMPARE(cands.first().id, c.id);
         QVERIFY(db.isPinned(a.id));
+        // Espace disque : seuls les morceaux présents en local comptent.
+        db.upsertTrack(input("zzz", "Z", "pas en local"));
+        db.addToPlaylist(pl, db.trackByYt("zzz")->id);
+        QCOMPARE(db.playlist(pl)->diskSize, qint64(1000));
+        QCOMPARE(db.playlist(db.cachePlaylistId())->diskSize, qint64(2000));
+        db.removeFromPlaylist(pl, db.trackByYt("zzz")->id);
 
         // Recherche locale multi-mots (seulement les morceaux téléchargés).
         QCOMPARE(db.searchLocal("song artist", 10).size(), 1);

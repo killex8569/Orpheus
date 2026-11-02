@@ -23,6 +23,8 @@ class Backend : public QObject {
     Q_PROPERTY(TrackModel *queueModel READ queueModel CONSTANT)
     Q_PROPERTY(QVariantList playlists READ playlists NOTIFY playlistsChanged)
     Q_PROPERTY(QVariantMap currentPlaylist READ currentPlaylist NOTIFY currentPlaylistChanged)
+    // Texte de la barre de recherche de la playlist ouverte ("" = tous les morceaux).
+    Q_PROPERTY(QString playlistFilter READ playlistFilter NOTIFY currentPlaylistChanged)
     Q_PROPERTY(QVariantList jobs READ jobs NOTIFY jobsChanged)
     Q_PROPERTY(bool searching READ searching NOTIFY searchChanged)
     Q_PROPERTY(QString searchError READ searchError NOTIFY searchChanged)
@@ -83,6 +85,7 @@ public:
     TrackModel *queueModel() { return &m_queue; }
     QVariantList playlists() const { return m_playlists; }
     QVariantMap currentPlaylist() const { return m_currentPlaylist; }
+    QString playlistFilter() const { return m_playlistFilter; }
     QVariantList jobs() const { return m_jobs; }
     bool searching() const { return m_searching; }
     QString searchError() const { return m_searchError; }
@@ -146,6 +149,9 @@ public:
     // Playlists
     Q_INVOKABLE qint64 createPlaylist(const QString &name, const QString &addFromList = {}, int row = -1);
     Q_INVOKABLE void openPlaylist(qint64 id);
+    // Filtre la playlist ouverte : chaque mot doit apparaître dans le titre, l'artiste
+    // ou l'album (sans tenir compte de la casse ni des accents).
+    Q_INVOKABLE void filterPlaylist(const QString &text);
     Q_INVOKABLE void playPlaylist(qint64 id, bool shuffle);
     // Bouton « Aléatoire » d'une playlist : active/désactive le mélange de toute la playlist.
     Q_INVOKABLE void shufflePlaylist(qint64 id);
@@ -219,6 +225,7 @@ private:
     QVariantList m_playlists, m_jobs, m_remoteYoutube, m_remoteSpotify;
     QVariantMap m_currentPlaylist;
     qint64 m_currentPlaylistId = 0;
+    QString m_playlistFilter;
     qint64 m_playingPlaylistId = 0;
     qint64 m_targetPlaylistId = 0;
     bool m_searching = false;

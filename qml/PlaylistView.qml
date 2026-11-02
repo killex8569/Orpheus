@@ -6,6 +6,13 @@ Item {
     id: root
     readonly property var p: backend.currentPlaylist
     readonly property bool isCache: p.kind === "cache"
+    readonly property bool filtering: backend.playlistFilter !== ""
+    function focusFilter() { filterField.forceActiveFocus(); filterField.selectAll() }
+
+    // Nouvelle playlist ouverte : la recherche repart de zéro.
+    // (currentPlaylist change aussi à chaque téléchargement : on compare l'id.)
+    property var shownId: 0
+    onPChanged: if (p.id !== shownId) { shownId = p.id; filterTimer.stop(); filterField.text = "" }
 
     ColumnLayout {
         anchors.fill: parent
@@ -26,7 +33,7 @@ Item {
                    elide: Text.ElideRight; Layout.fillWidth: true }
             Text {
                 text: (root.p.trackCount || 0) + " morceaux · " + (root.p.durationText || "0:00") + " · "
-                      + (root.p.readyCount || 0) + " en local"
+                      + (root.p.readyCount || 0) + " en local · " + (root.p.diskSizeText || "0 octet")
                 color: OTheme.muted
                 font.pixelSize: 14
             }
@@ -63,13 +70,60 @@ Item {
             }
         }
 
+        // Recherche dans la playlist (titre, artiste, album).
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            visible: (root.p.trackCount || 0) > 0
+            TextField {
+                id: filterField
+                Layout.fillWidth: true
+                Layout.maximumWidth: 420
+                implicitHeight: 38
+                placeholderText: "Rechercher dans la playlist"
+                placeholderTextColor: OTheme.muted
+                color: OTheme.text
+                font.pixelSize: 14
+                leftPadding: 40
+                rightPadding: clearBtn.visible ? 36 : 12
+                selectByMouse: true
+                onTextChanged: filterTimer.restart()
+                onAccepted: backend.filterPlaylist(text)
+                Keys.onEscapePressed: { text = ""; backend.filterPlaylist(""); focus = false }
+                background: Rectangle {
+                    radius: 19
+                    color: OTheme.panel2
+                    border.color: filterField.activeFocus ? OTheme.accent : OTheme.border
+                    Icon { iconName: "search"; size: 16; color: OTheme.muted; anchors.verticalCenter: parent.verticalCenter; x: 14 }
+                }
+                IconButton {
+                    id: clearBtn
+                    visible: filterField.text !== ""
+                    iconName: "close"; iconSize: 14; tip: "Effacer"
+                    anchors.right: parent.right; anchors.rightMargin: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    onClicked: { filterField.text = ""; backend.filterPlaylist("") }
+                }
+                // Petite attente : la liste n'est pas recalculée à chaque lettre.
+                Timer { id: filterTimer; interval: 150; onTriggered: backend.filterPlaylist(filterField.text) }
+            }
+            Text {
+                visible: root.filtering
+                text: backend.playlistTracks.count + " résultat" + (backend.playlistTracks.count > 1 ? "s" : "")
+                color: OTheme.muted
+                font.pixelSize: 13
+            }
+        }
+
         TrackList {
             Layout.fillWidth: true
             Layout.fillHeight: true
             listName: "playlist"
-            editable: !root.isCache
+            // Pas de réordonnancement sur une liste filtrée (positions ambiguës).
+            editable: !root.isCache && !root.filtering
             model: backend.playlistTracks
-            emptyText: root.isCache ? "Les morceaux que vous écoutez apparaîtront ici."
+            emptyText: root.filtering ? "Aucun morceau ne correspond à « " + backend.playlistFilter + " »."
+                     : root.isCache ? "Les morceaux que vous écoutez apparaîtront ici."
                                     : "Playlist vide — ajoutez des morceaux depuis la recherche (clic droit → Ajouter à une playlist)."
         }
     }

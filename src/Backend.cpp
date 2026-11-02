@@ -7,6 +7,7 @@
 #include <QRandomGenerator>
 #include <QUrlQuery>
 #include <QUrl>
+#include <algorithm>
 #include <memory>
 
 #include "Matcher.h"
@@ -337,8 +338,17 @@ void Backend::play(const QString &list, int row)
         return;
     }
     if (list == "playlist") {
+        // Toute la playlist est lue, même filtrée : on part du morceau choisi.
+        const QList<Track> all = m_db.playlistTracks(m_currentPlaylistId);
+        int start = row;
+        if (!m_playlistFilter.isEmpty())
+            for (int i = 0; i < all.size(); ++i)
+                if (all[i].id == t->id) {
+                    start = i;
+                    break;
+                }
         m_playingPlaylistId = m_currentPlaylistId;
-        m_player->playList(m_db.playlistTracks(m_currentPlaylistId), row, m_player->shuffle());
+        m_player->playList(all, start, m_player->shuffle());
         return;
     }
     // Recherche : les résultats suivants déjà identifiés (YouTube) forment la file.
@@ -442,7 +452,7 @@ void Backend::trackAction(const QString &list, int row, const QString &action, c
             return;
         if (list == "queue") {
             m_player->moveItem(row, to);
-        } else if (list == "playlist") {
+        } else if (list == "playlist" && m_playlistFilter.isEmpty()) {
             m_db.moveInPlaylist(m_currentPlaylistId, t.id, to);
             openPlaylist(m_currentPlaylistId);
         }
@@ -469,6 +479,8 @@ void Backend::openPlaylist(qint64 id)
     const auto p = m_db.playlist(id);
     if (!p)
         return;
+    if (id != m_currentPlaylistId)
+        m_playlistFilter.clear();
     m_currentPlaylistId = id;
     m_currentPlaylist = p->toMap();
     if (p->kind == "user" && id != m_targetPlaylistId) {
@@ -477,8 +489,26 @@ void Backend::openPlaylist(qint64 id)
         updateMarks();
         emit playlistsChanged();
     }
-    m_playlistTracks.setTracks(m_db.playlistTracks(id));
+    QList<Track> tracks = m_db.playlistTracks(id);
+    if (!m_playlistFilter.isEmpty()) {
+        const QStringList words = Matcher::normalize(m_playlistFilter).split(' ', Qt::SkipEmptyParts);
+        tracks.removeIf([&words](const Track &t) {
+            const QString hay = Matcher::normalize(t.title + ' ' + t.artist + ' ' + t.album);
+            return !std::all_of(words.cbegin(), words.cend(), [&hay](const QString &w) { return hay.contains(w); });
+        });
+    }
+    m_playlistTracks.setTracks(tracks);
     emit currentPlaylistChanged();
+}
+
+void Backend::filterPlaylist(const QString &text)
+{
+    const QString f = text.trimmed();
+    if (f == m_playlistFilter)
+        return;
+    m_playlistFilter = f;
+    if (m_currentPlaylistId > 0)
+        openPlaylist(m_currentPlaylistId);
 }
 
 void Backend::playPlaylist(qint64 id, bool shuffleOn)

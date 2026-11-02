@@ -136,7 +136,11 @@ ApplicationWindow {
 
     // ---------- Raccourcis ----------
     Shortcut { sequence: "Ctrl+K"; onActivated: win.navigate("search", 0) }
-    Shortcut { sequences: ["Ctrl+F"]; onActivated: win.navigate("search", 0) }
+    // Dans une playlist, Ctrl+F cherche dans la playlist ; ailleurs, recherche en ligne.
+    Shortcut {
+        sequences: ["Ctrl+F"]
+        onActivated: win.view === "playlist" ? playlistView.focusFilter() : win.navigate("search", 0)
+    }
     // Les raccourcis à une touche ne s'appliquent pas pendant la saisie de texte.
     readonly property bool typing: activeFocusItem instanceof TextInput || activeFocusItem instanceof TextEdit
     Shortcut { sequence: "Space"; enabled: !win.typing; onActivated: backend.togglePlay() }
@@ -176,7 +180,7 @@ ApplicationWindow {
             currentIndex: ["search", "playlist", "queue", "import", "settings", "lyrics", "stats"].indexOf(win.view)
 
             SearchView { id: searchView }
-            PlaylistView {}
+            PlaylistView { id: playlistView }
             QueueView {}
             ImportView {
                 onOpenSettings: win.navigate("settings", 0)
