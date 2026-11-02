@@ -144,9 +144,9 @@ ApplicationWindow {
     // Les raccourcis à une touche ne s'appliquent pas pendant la saisie de texte.
     readonly property bool typing: activeFocusItem instanceof TextInput || activeFocusItem instanceof TextEdit
     Shortcut { sequence: "Space"; enabled: !win.typing; onActivated: backend.togglePlay() }
-    Shortcut { sequence: "Media Play"; onActivated: backend.togglePlay() }
-    Shortcut { sequence: "Media Next"; onActivated: backend.next() }
-    Shortcut { sequence: "Media Previous"; onActivated: backend.prev() }
+    Shortcut { sequence: "Media Play"; enabled: !mprisActive; onActivated: backend.togglePlay() }
+    Shortcut { sequence: "Media Next"; enabled: !mprisActive; onActivated: backend.next() }
+    Shortcut { sequence: "Media Previous"; enabled: !mprisActive; onActivated: backend.prev() }
     Shortcut { sequence: "Shift+Right"; enabled: !win.typing; onActivated: backend.next() }
     Shortcut { sequence: "Shift+Left"; enabled: !win.typing; onActivated: backend.prev() }
     Shortcut { sequence: "Right"; enabled: !win.typing; onActivated: backend.seekRelative(10) }

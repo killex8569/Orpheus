@@ -184,6 +184,9 @@ void Player::onMpvEvents()
             emit stateChanged();
             prefetchNext();
             break;
+        case MPV_EVENT_PLAYBACK_RESTART:
+            emit seeked();
+            break;
         case MPV_EVENT_END_FILE: {
             auto *e = static_cast<mpv_event_end_file *>(ev->data);
             if (e->playlist_entry_id != m_entryId)

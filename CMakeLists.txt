@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Network Test)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Network Test DBus)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 
@@ -39,8 +39,9 @@ qt_add_executable(orpheus
     src/Player.cpp
     src/TrackModel.cpp
     src/Backend.cpp
+    src/Mpris.cpp
 )
-target_link_libraries(orpheus PRIVATE orpheus_core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 PkgConfig::MPV)
+target_link_libraries(orpheus PRIVATE orpheus_core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::DBus PkgConfig::MPV)
 target_compile_options(orpheus PRIVATE -Wall -Wextra)
 
 # Doit précéder qt_add_qml_module. Les fichiers QML sont placés à la racine du module

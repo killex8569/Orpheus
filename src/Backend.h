@@ -102,6 +102,7 @@ public:
     int queueIndex() const { return m_player->index(); }
     QString title() const { return m_player->current() ? m_player->current()->title : QString(); }
     QString artist() const { return m_player->current() ? m_player->current()->artist : QString(); }
+    QString album() const { return m_player->current() ? m_player->current()->album : QString(); }
     QString cover() const;
     bool paused() const { return m_player->paused(); }
     bool loading() const { return m_player->loading(); }
@@ -150,6 +151,10 @@ public:
     Q_INVOKABLE void setVolume(double v) { m_player->setVolume(v); }
     Q_INVOKABLE void toggleShuffle() { m_player->setShuffle(!m_player->shuffle()); }
     Q_INVOKABLE void cycleRepeat() { m_player->setRepeat((m_player->repeat() + 1) % 3); }
+    void setShuffle(bool on) { m_player->setShuffle(on); }
+    void setRepeat(int mode) { m_player->setRepeat(mode); }
+    bool canGoNext() const { return m_player->index() + 1 < m_player->queue().size() || (m_player->repeat() != Player::RepeatOff && hasTrack()); }
+    bool canGoPrevious() const { return hasTrack(); }
     Q_INVOKABLE void clearQueue() { m_player->clearQueue(); }
 
     // Playlists
@@ -195,6 +200,7 @@ signals:
     void trackChanged();
     void playerChanged();
     void positionChanged();
+    void seeked();  // saut dans le morceau (pour MPRIS)
     void downloadsChanged();
     void accountsChanged();
     void remoteChanged();

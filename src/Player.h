@@ -60,6 +60,8 @@ signals:
     void errorOccurred(const QString &message);
     // Morceau écouté à plus de 50 % : compté dans les statistiques.
     void playCounted(qint64 trackId);
+    // Lecture repartie d'une nouvelle position (saut, ou début d'un morceau).
+    void seeked();
 
 private:
     void onMpvEvents();

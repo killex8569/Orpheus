@@ -50,6 +50,7 @@ bool Backend::init(QString *error)
         if (m_currentPlaylistId == playlistId)
             openPlaylist(playlistId);
     });
+    connect(m_player, &Player::seeked, this, &Backend::seeked);
     connect(m_player, &Player::playCounted, this, [this] { loadStats(m_statsDays); });
     connect(m_player, &Player::errorOccurred, this, [this](const QString &m) { emit toast(m, true); });
     connect(m_dl, &Downloader::statusChanged, this, &Backend::downloadsChanged);

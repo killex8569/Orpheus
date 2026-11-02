@@ -12,6 +12,7 @@
 #include <clocale>
 
 #include "Backend.h"
+#include "Mpris.h"
 
 int main(int argc, char *argv[])
 {
@@ -47,7 +48,21 @@ int main(int argc, char *argv[])
 
     QQuickStyle::setStyle("Basic");
     QQmlApplicationEngine engine;
+    auto raiseWindow = [&engine] {
+        for (QObject *o : engine.rootObjects())
+            if (auto *w = qobject_cast<QQuickWindow *>(o)) {
+                w->show();
+                w->raise();
+                w->requestActivate();
+            }
+    };
+    // MPRIS : contrôle depuis le bureau (widget média, touches multimédia globales…).
+    Mpris mpris(&backend, raiseWindow);
+    const bool mprisActive = mpris.registerService();
     engine.rootContext()->setContextProperty("backend", &backend);
+    // Avec MPRIS, les touches multimédia passent par le bureau : pas de raccourcis
+    // en double dans la fenêtre.
+    engine.rootContext()->setContextProperty("mprisActive", mprisActive);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
     engine.loadFromModule("Orpheus", "Main");
@@ -85,12 +100,7 @@ int main(int argc, char *argv[])
 
     QObject::connect(&instanceServer, &QLocalServer::newConnection, &app, [&] {
         delete instanceServer.nextPendingConnection();
-        for (QObject *o : engine.rootObjects())
-            if (auto *w = qobject_cast<QQuickWindow *>(o)) {
-                w->show();
-                w->raise();
-                w->requestActivate();
-            }
+        raiseWindow();
     });
     return app.exec();
 }
