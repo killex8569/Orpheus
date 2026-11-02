@@ -20,7 +20,8 @@ class QUdpSocket;
 // morceau depuis son disque (ou le télécharge). L'hôte fait autorité : les autres
 // lui envoient leurs demandes (ajout, pause, saut…), il les applique puis diffuse
 // l'état complet à tous. Messages JSON, un par ligne, sur TCP ; les Jams se
-// signalent par diffusion UDP sur le réseau local.
+// signalent par diffusion UDP sur le réseau local, et répondent à une recherche par
+// nom (« qui héberge le Jam X ? ») : l'invité n'a pas à saisir d'adresse IP.
 namespace Jam {
 
 constexpr quint16 DiscoveryPort = 47800;
@@ -37,6 +38,10 @@ bool isValidYtId(const QString &id);
 bool isValidCode(const QString &code);
 // Preuve de connaissance du code, sans l'envoyer : HMAC-SHA256(code, défi de l'hôte).
 QString codeProof(const QString &code, const QString &nonce);
+// Nom recherché ↔ nom du Jam : casse et espaces ignorés ; « Alex » trouve « Jam de Alex ».
+bool jamNameMatches(const QString &requested, const QString &jamName);
+// Adresse d'un réseau local de cette machine (seules ces adresses obtiennent une réponse).
+bool isLanAddress(const QHostAddress &address);
 
 struct Item {
     qint64 id = 0;  // attribué par l'hôte
@@ -140,15 +145,19 @@ public:
     // (Hôte) le lecteur de l'hôte a terminé ce morceau.
     void trackEnded(qint64 itemId);
 
-    // Recherche des Jams du réseau local.
+    // Recherche des Jams du réseau local : annonces des hôtes, et demandes envoyées
+    // régulièrement (réponses directes, mieux acceptées par les pare-feu).
     void setDiscovering(bool on);
     const QList<Jam::Discovered> &discovered() const { return m_discovered; }
+    // Recherche d'un Jam par son nom (environ 2 s) ; résultat : lookupFinished.
+    void lookup(const QString &name);
 
 signals:
     void stateChanged();
     void roleChanged();
     void discoveredChanged();
     void notice(const QString &message, bool error);
+    void lookupFinished(const QString &name, const QList<Jam::Discovered> &found);
 
 private:
     struct Peer {
@@ -189,6 +198,13 @@ private:
 
     void request(const QJsonObject &msg);  // hôte : applique ; client : envoie
     void readDiscovery();
+    // Découverte
+    void listenForQueries();
+    void answerQuery(const QHostAddress &from, quint16 port, const QJsonObject &query);
+    void ensureProbe();
+    void sendProbe(const QString &name, const QString &nonce);
+    void readProbe();
+    void mergeDiscovered(const Jam::Discovered &d);
 
     Role m_role = None;
     Jam::State m_state;
@@ -214,5 +230,13 @@ private:
     QUdpSocket *m_discovery = nullptr;
     QTimer m_expireTimer;
     QList<Jam::Discovered> m_discovered;
+    // Demandes envoyées (socket à port libre, réponses directes) et réponses attendues.
+    QUdpSocket *m_probe = nullptr;
+    QTimer m_probeTimer;
+    QString m_listNonce;
+    QString m_lookupName, m_lookupNonce;
+    QList<Jam::Discovered> m_lookupFound;
+    // (Hôte) demandes reçues par adresse : limite anti-abus.
+    QHash<quint32, QList<qint64>> m_queryLog;
     QString m_jamId;
 };

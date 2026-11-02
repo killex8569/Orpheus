@@ -25,6 +25,9 @@ class JamController : public QObject {
     Q_PROPERTY(QString code READ code NOTIFY changed)  // code d'accès (hôte)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
     Q_PROPERTY(QVariantList discovered READ discovered NOTIFY discoveredChanged)
+    // Recherche par nom en cours (création ou connexion) : boutons désactivés.
+    Q_PROPERTY(bool lookingUp READ lookingUp NOTIFY lookingUpChanged)
+    Q_PROPERTY(QString defaultJamName READ defaultJamName NOTIFY settingsChanged)
     Q_PROPERTY(TrackModel *queue READ queue CONSTANT)
     Q_PROPERTY(QString myName READ myName WRITE setMyName NOTIFY settingsChanged)
     Q_PROPERTY(int latencyMs READ latencyMs WRITE setLatencyMs NOTIFY settingsChanged)
@@ -42,24 +45,30 @@ public:
     QString code() const { return m_session.code(); }
     QString statusText() const { return m_status; }
     QVariantList discovered() const;
+    bool lookingUp() const { return m_pending != Pending::None; }
+    QString defaultJamName() const;
     TrackModel *queue() { return &m_queue; }
     QString myName() const;
     void setMyName(const QString &name);
     int latencyMs() const { return m_latencyMs; }
     void setLatencyMs(int ms);
 
-    // `code` : 4 chiffres, demandés à toute personne qui rejoint.
-    Q_INVOKABLE void create(const QString &code);
-    // « 192.168.1.20 » ou « 192.168.1.20:47801 ».
-    Q_INVOKABLE void join(const QString &address, const QString &code);
+    // `code` : 4 chiffres, demandés à toute personne qui rejoint. `name` : nom du Jam,
+    // vérifié libre sur le réseau avant la création (vide = « Jam de <pseudo> »).
+    Q_INVOKABLE void create(const QString &code, const QString &name = {});
+    // Nom du Jam (recherché sur le réseau), ou « 192.168.1.20 », « 192.168.1.20:47801 ».
+    Q_INVOKABLE void join(const QString &nameOrAddress, const QString &code);
     Q_INVOKABLE void joinDiscovered(int index, const QString &code);
     Q_INVOKABLE bool isValidCode(const QString &code) const { return Jam::isValidCode(code); }
     Q_INVOKABLE void leave();
     Q_INVOKABLE void setDiscovering(bool on) { m_session.setDiscovering(on); }
 
     // Commandes relayées par Backend pendant un Jam (elles s'appliquent à tous).
-    // Renvoie le nombre de morceaux envoyés.
+    // Renvoie le nombre de morceaux envoyés (ceux déjà en cours ou à venir sont ignorés).
     int add(const QList<Track> &tracks);
+    // Position du morceau s'il est en cours ou à venir dans le Jam, sinon -1.
+    int upcomingIndex(const QString &ytId) const;
+    bool playing() const { return m_session.state().playing; }
     void togglePlay();
     void next() { m_session.next(); }
     void prev() { m_session.prev(); }
@@ -72,11 +81,13 @@ signals:
     void queueChanged();  // morceaux de la file commune ajoutés, retirés ou déplacés
     void statusChanged();
     void discoveredChanged();
+    void lookingUpChanged();
     void settingsChanged();
     void toast(const QString &message, bool error);
 
 private:
     void onRoleChanged();
+    void onLookupFinished(const QString &name, const QList<Jam::Discovered> &found);
     void onStateChanged();
     void tick();
     void setStatus(const QString &s);
@@ -95,6 +106,9 @@ private:
     qint64 m_endedTrack = 0;         // morceau arrivé à sa fin (en attente du suivant)
     int m_latencyMs = 0;
     bool m_wasActive = false;
+    // Recherche par nom en attente de réponse.
+    enum class Pending { None, Create, Join } m_pending = Pending::None;
+    QString m_pendingName, m_pendingCode;
     QString m_status;
     QTimer m_tick, m_startTimer;
 };

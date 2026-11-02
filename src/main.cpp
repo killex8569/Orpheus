@@ -113,9 +113,10 @@ int main(int argc, char *argv[])
         backend.search(q, "youtube");
     }
 
-    // ORPHEUS_VIEW=lyrics|stats|… : vue affichée au démarrage (captures d'écran).
+    // ORPHEUS_VIEW=lyrics|stats|playlist:<id>|… : vue affichée au démarrage (captures d'écran).
     if (const QString v = qEnvironmentVariable("ORPHEUS_VIEW"); !v.isEmpty() && !engine.rootObjects().isEmpty())
-        engine.rootObjects().first()->setProperty("view", v);
+        QMetaObject::invokeMethod(engine.rootObjects().first(), "navigate", Q_ARG(QVariant, v.section(':', 0, 0)),
+                                  Q_ARG(QVariant, v.section(':', 1).toLongLong()));
 
     if (const QString url = qEnvironmentVariable("ORPHEUS_DEMO_IMPORT"); !url.isEmpty())
         backend.importUrl(url);

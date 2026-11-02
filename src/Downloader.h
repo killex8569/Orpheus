@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QProcess>
+#include <QTimer>
 
 #include "Database.h"
 #include "Paths.h"
@@ -32,10 +33,22 @@ public:
     void removeFile(qint64 trackId);
     void enforceCacheLimit();
 
+    // Range le fichier d'un morceau là où il doit être : dossier de la première playlist
+    // qui en a un, sinon bibliothèque d'Orpheus. Ne touche qu'aux fichiers connus de la
+    // base et n'écrase jamais un fichier existant. false si le déplacement a échoué
+    // (dossier inaccessible, fichier ouvert…) : il sera retenté au prochain rangement.
+    bool placeFile(qint64 trackId);
+    // Rangement de tous les morceaux concernés, un peu plus tard (regroupe les changements).
+    void schedulePlacement();
+    // Nom du fichier : « <id>.ext » dans la bibliothèque, « Artiste - Titre [id].ext » ailleurs.
+    static QString fileNameFor(const Track &t, const QString &ext, bool inLibrary);
+
 signals:
     void finished(qint64 trackId, bool ok, const QString &error);
     void progress(qint64 trackId, double percent);
     void statusChanged();
+    // Fin d'un rangement qui a déplacé ou n'a pas pu déplacer des fichiers.
+    void placementDone(int moved, int failed);
 
 private:
     struct Active {
@@ -51,6 +64,7 @@ private:
     void pump();
     bool canStartBackground() const;
     void cleanupPartial(const QString &ytId);
+    void placeNext();
 
     Database *m_db;
     YtDlp *m_yt;
@@ -59,4 +73,9 @@ private:
     QHash<qint64, Active> m_active;
     QHash<qint64, int> m_attempts;  // tentatives déjà faites (nouvel essai différé)
     bool m_pumpScheduled = false;
+    // Rangement : une passe à la fois, un fichier par tour de boucle (interface fluide).
+    QTimer m_placeTimer;
+    QList<qint64> m_placeQueue;
+    bool m_placing = false, m_placeAgain = false;
+    int m_placedMoved = 0, m_placedFailed = 0;
 };

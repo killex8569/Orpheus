@@ -91,15 +91,27 @@ Item {
             Card {
                 title: "Créer un Jam"
                 subtitle: "Vous devenez l'hôte. Tout le monde peut ajouter des morceaux, mettre en pause ou passer au suivant, pour tous à la fois. "
-                          + "Choisissez un code à 4 chiffres : il sera demandé à vos amis pour entrer."
-                RowLayout {
-                    spacing: 12
+                          + "Vos amis rejoignent avec le nom du Jam et le code à 4 chiffres : pas d'adresse IP à taper."
+                GridLayout {
+                    columns: 2
+                    columnSpacing: 12
+                    rowSpacing: 10
+                    Text { text: "Nom du Jam"; color: OTheme.text; font.pixelSize: 14 }
+                    Field {
+                        id: createName
+                        Layout.preferredWidth: 280
+                        placeholderText: root.jam.defaultJamName
+                        maximumLength: 40
+                    }
                     Text { text: "Code d'accès"; color: OTheme.text; font.pixelSize: 14 }
-                    CodeField { id: createCode; onAccepted: if (complete) root.jam.create(text) }
-                    PillButton {
-                        text: "Créer un Jam"; iconName: "jam"; primary: true
-                        enabled: createCode.complete
-                        onClicked: root.jam.create(createCode.text)
+                    RowLayout {
+                        spacing: 12
+                        CodeField { id: createCode; onAccepted: if (complete && !root.jam.lookingUp) root.jam.create(text, createName.text) }
+                        PillButton {
+                            text: root.jam.lookingUp ? "Vérification du nom…" : "Créer un Jam"; iconName: "jam"; primary: true
+                            enabled: createCode.complete && !root.jam.lookingUp
+                            onClicked: root.jam.create(createCode.text, createName.text)
+                        }
                     }
                 }
             }
@@ -162,20 +174,22 @@ Item {
                 }
 
                 Text {
-                    text: "Pas dans la liste ? Saisissez l'adresse affichée chez l'hôte :"
+                    text: "Pas dans la liste ? Saisissez le nom du Jam (ou, à défaut, l'adresse IP affichée chez l'hôte) :"
                     color: OTheme.muted; font.pixelSize: 13; Layout.topMargin: 6
+                    wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 RowLayout {
                     spacing: 10
                     Field {
                         id: addr
-                        Layout.preferredWidth: 220
-                        placeholderText: "ex. 192.168.1.20"
-                        onAccepted: if (joinCode.complete) root.jam.join(text, joinCode.text)
+                        Layout.preferredWidth: 260
+                        placeholderText: "ex. Soirée chez Alex, ou 192.168.1.20"
+                        maximumLength: 80
+                        onAccepted: if (joinCode.complete && !root.jam.lookingUp) root.jam.join(text, joinCode.text)
                     }
                     PillButton {
-                        text: "Rejoindre"
-                        enabled: addr.text.trim() !== "" && joinCode.complete
+                        text: root.jam.lookingUp ? "Recherche…" : "Rejoindre"
+                        enabled: addr.text.trim() !== "" && joinCode.complete && !root.jam.lookingUp
                         onClicked: root.jam.join(addr.text, joinCode.text)
                     }
                 }
@@ -228,8 +242,8 @@ Item {
                 spacing: 10
                 Icon { iconName: "link"; size: 15; color: OTheme.muted }
                 Text {
-                    text: "Code d'accès : <b>" + root.jam.code + "</b> · Vos amis voient ce Jam dans leur onglet Jam. "
-                          + "Sinon, ils peuvent saisir l'adresse : <b>" + root.jam.address + "</b>"
+                    text: "Pour rejoindre : le nom <b>" + root.jam.name + "</b> et le code <b>" + root.jam.code + "</b>. "
+                          + "Vos amis voient aussi ce Jam dans leur onglet Jam. En dernier recours, l'adresse : <b>" + root.jam.address + "</b>"
                     textFormat: Text.StyledText
                     color: OTheme.muted; font.pixelSize: 13; wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }

@@ -1,3 +1,5 @@
+#include <QDir>
+#include <QFile>
 #include <QSignalSpy>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -7,6 +9,7 @@
 #include <QTimer>
 
 #include "Database.h"
+#include "Downloader.h"
 #include "Importer.h"
 #include "Jam.h"
 #include "Lyrics.h"
@@ -244,6 +247,19 @@ private slots:
         QCOMPARE(clientS.state().items.first().addedBy, QString("Bob"));
         const qint64 first = clientS.state().current()->id;
 
+        // Doublons refusés : morceau déjà en cours ou à venir, double envoi (double-clic).
+        Jam::Item c;
+        c.ytId = "ccccccccccc";
+        c.title = "C";
+        hostS.add({a, c, c});
+        clientS.add({b});
+        QVERIFY(QTest::qWaitFor([&] { return clientS.state().items.size() == 3; }, 3000));
+        QTest::qWait(100);
+        QCOMPARE(hostS.state().items.size(), 3);
+        QCOMPARE(hostS.state().items.last().ytId, QString("ccccccccccc"));
+        hostS.remove(hostS.state().items.last().id);
+        QVERIFY(QTest::qWaitFor([&] { return clientS.state().items.size() == 2; }, 3000));
+
         hostS.reportReady(first);
         QTest::qWait(50);
         QVERIFY(hostS.state().waiting);  // Bob n'est pas encore prêt
@@ -308,6 +324,59 @@ private slots:
         // Nouveau Jam : le blocage est levé.
         QVERIFY(hostS.host("Jam privé 2", "Alice", "4821", 0));
         QVERIFY(attempt("4821").first);
+    }
+
+    void jamLookupByName()
+    {
+        QVERIFY(Jam::jamNameMatches("  soirée   CHEZ moi ", "Soirée chez moi"));
+        QVERIFY(Jam::jamNameMatches("alex", "Jam de Alex"));
+        QVERIFY(!Jam::jamNameMatches("", "Jam de Alex"));
+        QVERIFY(!Jam::jamNameMatches("Alexandre", "Jam de Alex"));
+        QVERIFY(Jam::isLanAddress(QHostAddress::LocalHost));
+        QVERIFY(!Jam::isLanAddress(QHostAddress("8.8.8.8")));
+
+        JamSession hostS, guest;
+        QVERIFY(hostS.host("Soirée chez moi", "Alice", "4821", 0));
+        auto lookup = [&](const QString &name) {
+            QList<Jam::Discovered> result;
+            bool done = false;
+            const auto c = connect(&guest, &JamSession::lookupFinished, this,
+                                   [&](const QString &, const QList<Jam::Discovered> &found) {
+                                       result = found;
+                                       done = true;
+                                   });
+            guest.lookup(name);
+            (void)QTest::qWaitFor([&] { return done; }, 4000);
+            disconnect(c);
+            return result;
+        };
+        // Trouvé par son nom (casse et espaces ignorés) : adresse et port de l'hôte.
+        auto found = lookup("soirée CHEZ moi");
+        QCOMPARE(found.size(), 1);
+        QCOMPARE(found.first().port, hostS.port());
+        QCOMPARE(found.first().name, QString("Soirée chez moi"));
+        QVERIFY(lookup("Autre Jam").isEmpty());
+        // Rejoindre avec l'adresse trouvée.
+        guest.join(found.first().address, found.first().port, "Bob", "4821");
+        QVERIFY(QTest::qWaitFor([&] { return hostS.state().members.size() == 2; }, 3000));
+        guest.leave();
+        QVERIFY(QTest::qWaitFor([&] { return hostS.state().members.size() == 1; }, 3000));
+
+        // Appareil bloqué pour mauvais codes : le Jam ne lui répond même plus. (Sur une
+        // même machine, la recherche peut arriver par chaque adresse locale : l'intrus
+        // se fait bloquer sur toutes, comme un appareil distant sur la sienne.)
+        const QStringList addresses = QStringList{"127.0.0.1"} + JamSession::localAddresses();
+        for (const QString &addr : addresses)
+            for (const char *code : {"0000", "1111", "2222"}) {
+                JamSession intruder;
+                intruder.join(QHostAddress(addr), hostS.port(), "Intrus", code);
+                (void)QTest::qWaitFor([&] { return intruder.role() == JamSession::None; }, 3000);
+            }
+        QVERIFY(lookup("Soirée chez moi").isEmpty());
+        // Nouveau Jam (blocage levé) : « Alex » trouve « Jam de Alex ».
+        QVERIFY(hostS.host("Jam de Alex", "Alex", "4821", 0));
+        QCOMPARE(lookup("alex").size(), 1);
+        hostS.leave();
     }
 
     void versionCompare()
@@ -407,6 +476,90 @@ private slots:
         QCOMPARE(db.playlistTracks(pl).first().id, c.id);
     }
 
+    void playlistFolders()
+    {
+        QTemporaryDir dir;
+        Paths paths;
+        paths.data = dir.filePath("data");
+        paths.library = paths.data + "/library";
+        paths.covers = paths.data + "/covers";
+        paths.bin = paths.data + "/bin";
+        paths.db = paths.data + "/f.db";
+        for (const QString &d : {paths.library, paths.covers, paths.bin})
+            QDir().mkpath(d);
+        Database db;
+        QVERIFY(db.open(paths.db, nullptr));
+        YtDlp yt(paths.bin);
+        Downloader dl(&db, &yt, paths);
+
+        // Noms lisibles et valables partout ; « <id>.ext » dans la bibliothèque.
+        Track named;
+        named.ytId = "abcdefghijk";
+        named.artist = "AC/DC";
+        named.title = "Back In Black?  ";
+        QCOMPARE(Downloader::fileNameFor(named, "opus", false), QString("AC DC - Back In Black [abcdefghijk].opus"));
+        QCOMPARE(Downloader::fileNameFor(named, "opus", true), QString("abcdefghijk.opus"));
+
+        const Track t = db.upsertTrack(input("abcdefghijk", "Artist", "Song"));
+        const QString libFile = paths.library + "/abcdefghijk.opus";
+        {
+            QFile f(libFile);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("opus data");
+        }
+        db.setFile(t.id, libFile, "opus", 160, 9, 0);
+        const QString f1 = dir.filePath("Musique/Chill"), f2 = dir.filePath("Musique/Sport");
+        const qint64 p1 = db.createPlaylist("Chill", "user"), p2 = db.createPlaylist("Sport", "user");
+        db.setPlaylistFolder(p1, f1);
+        db.setPlaylistFolder(p2, f2);
+        db.setPlaylistFolder(db.cachePlaylistId(), f1);  // ignoré : le cache n'a pas de dossier
+        QVERIFY(db.playlist(db.cachePlaylistId())->folder.isEmpty());
+        const QString name = "Artist - Song [abcdefghijk].opus";
+
+        // Dans une playlist à dossier : déplacé et renommé.
+        QVERIFY(db.tracksToPlace(paths.library).isEmpty());
+        db.addToPlaylist(p2, t.id);
+        QCOMPARE(db.tracksToPlace(paths.library), QList<qint64>({t.id}));
+        QVERIFY(dl.placeFile(t.id));
+        QCOMPARE(db.track(t.id)->filePath, f2 + "/" + name);
+        QVERIFY(!QFile::exists(libFile));
+        // Dans deux playlists à dossier : celle qui vient en premier dans la barre latérale.
+        db.addToPlaylist(p1, t.id);
+        QVERIFY(dl.placeFile(t.id));
+        QCOMPARE(db.track(t.id)->filePath, f1 + "/" + name);
+        db.setPlaylistOrder({db.cachePlaylistId(), p2, p1});
+        QVERIFY(dl.placeFile(t.id));
+        QCOMPARE(db.track(t.id)->filePath, f2 + "/" + name);
+        // Un autre fichier porte déjà le nom voulu : jamais écrasé, le morceau ne bouge pas.
+        {
+            QFile other(f1 + "/" + name);
+            QVERIFY(other.open(QIODevice::WriteOnly));
+            other.write("fichier de l'utilisateur, à ne pas toucher");
+        }
+        db.removeFromPlaylist(p2, t.id);
+        QVERIFY(!dl.placeFile(t.id));
+        QCOMPARE(db.track(t.id)->filePath, f2 + "/" + name);
+        QFile::remove(f1 + "/" + name);
+        // Retiré des playlists à dossier : retour dans la bibliothèque, sous son nom d'origine.
+        db.removeFromPlaylist(p1, t.id);
+        QCOMPARE(db.tracksToPlace(paths.library), QList<qint64>({t.id}));  // encore hors de la bibliothèque
+        QVERIFY(dl.placeFile(t.id));
+        QCOMPARE(db.track(t.id)->filePath, libFile);
+        QVERIFY(QFile::exists(libFile));
+        QVERIFY(db.tracksToPlace(paths.library).isEmpty());
+
+        // Rangement automatique (celui que déclenchent les changements de playlists).
+        QSignalSpy placed(&dl, &Downloader::placementDone);
+        db.addToPlaylist(p1, t.id);
+        dl.schedulePlacement();
+        dl.schedulePlacement();  // regroupé avec le précédent
+        QVERIFY(placed.wait(5000));
+        QCOMPARE(placed.count(), 1);
+        QCOMPARE(placed.first().at(0).toInt(), 1);  // déplacés
+        QCOMPARE(placed.first().at(1).toInt(), 0);  // échecs
+        QCOMPARE(db.track(t.id)->filePath, f1 + "/" + name);
+    }
+
     void playlistOrder()
     {
         QTemporaryDir dir;
@@ -438,15 +591,14 @@ private slots:
         // Une nouvelle playlist arrive en dernier, pas à sa place alphabétique.
         db.createPlaylist("Bossa", "user");
         QCOMPARE(names(db), QStringList({"Cache local", "Ambient", "Metal", "zouk", "Bossa"}));
-        // Nouvel ordre choisi, conservé après réouverture.
+        // Nouvel ordre choisi (« Cache local » compris), conservé après réouverture.
         QList<qint64> ids;
         for (const Playlist &p : db.playlists())
-            if (p.kind != "cache")
-                ids.prepend(p.id);
+            ids.prepend(p.id);
         db.setPlaylistOrder(ids);
         Database reopened;
         QVERIFY(reopened.open(path, nullptr));
-        QCOMPARE(names(reopened), QStringList({"Cache local", "Bossa", "zouk", "Metal", "Ambient"}));
+        QCOMPARE(names(reopened), QStringList({"Bossa", "zouk", "Metal", "Ambient", "Cache local"}));
     }
 };
 

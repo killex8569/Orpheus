@@ -20,6 +20,7 @@ struct Playlist {
     int readyCount = 0;
     double totalDuration = 0;
     qint64 diskSize = 0;  // octets des morceaux de la playlist présents en local
+    QString folder;       // dossier choisi pour ses fichiers ("" = bibliothèque d'Orpheus)
     QVariantMap toMap() const;
 };
 
@@ -68,6 +69,9 @@ class Database {
 public:
     bool open(const QString &path, QString *error);
     qint64 cachePlaylistId() const { return m_cachePlaylist; }
+    // Change à chaque modification qui peut déplacer des fichiers (appartenance aux
+    // playlists, dossiers, ordre) : le rangement n'est relancé que si nécessaire.
+    quint64 layoutVersion() const { return m_layoutVersion; }
 
     // Réglages (servis depuis la mémoire, écrits en base)
     QString setting(const QString &key, const QString &def = {}) const;
@@ -83,6 +87,8 @@ public:
     void rememberMatch(const QString &artist, const QString &title, const QString &ytId);
     void setState(qint64 id, const QString &state, const QString &error = {});
     void setFile(qint64 id, const QString &path, const QString &codec, double bitrate, qint64 size, double duration);
+    // Fichier déplacé (rangement dans le dossier d'une playlist).
+    void setFilePath(qint64 id, const QString &path);
     void enrichMetadata(qint64 id, const QString &title, const QString &artist, const QString &album);
     void clearFile(qint64 id);
     // Lecture commencée : date de dernière écoute et playlist « Cache local »
@@ -117,6 +123,14 @@ public:
     void renamePlaylist(qint64 id, const QString &name);
     // Nouvel ordre des playlists (identifiants dans l'ordre voulu).
     void setPlaylistOrder(const QList<qint64> &ids);
+    // Dossier des fichiers d'une playlist ("" = bibliothèque d'Orpheus).
+    void setPlaylistFolder(qint64 id, const QString &folder);
+    // Dossier où doit se trouver le fichier d'un morceau : celui de la première playlist
+    // (dans l'ordre de la barre latérale) qui en a un ; "" = bibliothèque.
+    QString folderForTrack(qint64 trackId) const;
+    // Morceaux en local à vérifier lors d'un rangement (hors bibliothèque, ou dans une
+    // playlist à dossier).
+    QList<qint64> tracksToPlace(const QString &libraryDir) const;
     bool deletePlaylist(qint64 id);
     QList<Track> playlistTracks(qint64 id) const;
     void addToPlaylist(qint64 playlistId, qint64 trackId);
@@ -135,6 +149,7 @@ private:
     QList<Track> queryTracks(const QString &sql, const QVariantList &binds = {}) const;
     QSqlDatabase db() const;
     qint64 m_cachePlaylist = 0;
+    quint64 m_layoutVersion = 1;
     // Copie en mémoire de la table settings : lue très souvent (à chaque morceau,
     // chaque téléchargement), elle n'est écrite qu'en cas de changement.
     QHash<QString, QString> m_settings;

@@ -178,8 +178,14 @@ public:
     // {id de playlist: "same" | "similar"} pour le morceau d'une liste (menu « Ajouter à »).
     Q_INVOKABLE QVariantMap playlistMarks(const QString &list, int row);
     Q_INVOKABLE void renamePlaylist(qint64 id, const QString &name);
-    // Déplace une playlist à la position « index » de la barre latérale (« Cache local » reste en tête).
+    // Déplace une playlist à la position « index » de la barre latérale.
     Q_INVOKABLE void movePlaylist(qint64 id, int index);
+    // Dossier des fichiers d'une playlist (chemin ou URL file:// ; "" = dossier par défaut).
+    // Ses morceaux déjà téléchargés y sont déplacés ; les suivants y seront rangés.
+    Q_INVOKABLE void setPlaylistFolder(qint64 id, const QString &folder);
+    // URL file:// d'un dossier (ouverture dans le gestionnaire de fichiers, dialogues).
+    Q_INVOKABLE QString folderUrl(const QString &path) const;
+    QString libraryPath() const { return m_paths.library; }
     Q_INVOKABLE void deletePlaylist(qint64 id);
     Q_INVOKABLE void downloadPlaylist(qint64 id);
     Q_INVOKABLE void syncPlaylist(qint64 id) { m_importer->syncPlaylist(id); }
@@ -252,6 +258,7 @@ private:
     bool m_searching = false;
     QString m_searchError, m_searchSource;
     quint64 m_searchSeq = 0;
+    quint64 m_placedLayout = 0;  // dernier état des playlists rangé sur le disque
     QString m_remoteError;
     bool m_remoteLoading = false;
     QString m_ytdlpVersion;

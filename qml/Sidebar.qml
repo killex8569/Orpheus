@@ -172,23 +172,25 @@ Rectangle {
             spacing: 2
             model: backend.playlists
             boundsBehavior: Flickable.StopAtBounds
-            interactive: dragFrom < 0
+            // Pas de défilement par glisser : il volerait le geste du glisser-déposer.
+            // La molette (WheelScroll) et la barre de défilement restent disponibles.
+            interactive: false
             ScrollBar.vertical: ScrollBar {}
             WheelScroll {}
 
-            // Point d'insertion sous le pointeur ; « Cache local » reste toujours en tête.
+            // Point d'insertion sous le pointeur.
             function updateDrop(scenePos) {
                 const p = mapFromItem(null, scenePos.x, scenePos.y)
                 const y = p.y + contentY
                 let idx = indexAt(10, y)
                 if (idx < 0) {
-                    idx = p.y < 0 ? 1 : count
+                    idx = p.y < 0 ? 0 : count
                 } else {
                     const it = itemAtIndex(idx)
                     if (it && y > it.y + it.height / 2)
                         idx += 1
                 }
-                dropAt = Math.max(1, idx)
+                dropAt = Math.max(0, idx)
             }
 
             delegate: Item {
@@ -197,7 +199,6 @@ Rectangle {
                 required property int index
                 readonly property bool active: root.view === "playlist" && root.playlistId === modelData.id
                 readonly property bool shown: !playlistsHeader.collapsed || active
-                readonly property bool movable: modelData.kind !== "cache"
                 width: ListView.view.width
                 height: shown ? 38 : 0
                 visible: shown
@@ -210,6 +211,31 @@ Rectangle {
                     count: slot.modelData.trackCount
                     active: slot.active
                     onClicked: root.navigate("playlist", slot.modelData.id)
+
+                    // Les gestionnaires sont sur la ligne elle-même : posés sur son conteneur,
+                    // ils ne verraient jamais l'appui, déjà pris par le bouton.
+                    DragHandler {
+                        enabled: !playlistsHeader.collapsed
+                        target: null
+                        xAxis.enabled: false
+                        onActiveChanged: {
+                            if (active) {
+                                plList.dragFrom = slot.index
+                                plList.updateDrop(centroid.scenePosition)
+                                return
+                            }
+                            const id = slot.modelData.id, from = plList.dragFrom, at = plList.dropAt
+                            plList.dragFrom = -1
+                            plList.dropAt = -1
+                            if (from >= 0 && at >= 0 && at !== from && at !== from + 1)
+                                backend.movePlaylist(id, at > from ? at - 1 : at)
+                        }
+                        onCentroidChanged: if (active) plList.updateDrop(centroid.scenePosition)
+                    }
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        onTapped: plMenu.popup()
+                    }
                 }
 
                 // Repère d'insertion pendant un glisser-déposer.
@@ -223,33 +249,9 @@ Rectangle {
                     color: OTheme.accent
                 }
 
-                DragHandler {
-                    enabled: slot.movable && !playlistsHeader.collapsed
-                    target: null
-                    xAxis.enabled: false
-                    onActiveChanged: {
-                        if (active) {
-                            plList.dragFrom = slot.index
-                            plList.updateDrop(centroid.scenePosition)
-                            return
-                        }
-                        const from = plList.dragFrom, at = plList.dropAt
-                        plList.dragFrom = -1
-                        plList.dropAt = -1
-                        if (at >= 1 && at !== from && at !== from + 1)
-                            backend.movePlaylist(slot.modelData.id, at > from ? at - 1 : at)
-                    }
-                    onCentroidChanged: if (active) plList.updateDrop(centroid.scenePosition)
-                }
-
-                TapHandler {
-                    acceptedButtons: Qt.RightButton
-                    enabled: slot.movable
-                    onTapped: plMenu.popup()
-                }
                 Menu {
                     id: plMenu
-                    MenuItem { text: "Monter"; enabled: slot.index > 1
+                    MenuItem { text: "Monter"; enabled: slot.index > 0
                                onTriggered: backend.movePlaylist(slot.modelData.id, slot.index - 1) }
                     MenuItem { text: "Descendre"; enabled: slot.index < plList.count - 1
                                onTriggered: backend.movePlaylist(slot.modelData.id, slot.index + 1) }

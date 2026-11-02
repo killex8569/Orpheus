@@ -14,6 +14,16 @@ static constexpr int kBackgroundGapMs = 1500;
 Downloader::Downloader(Database *db, YtDlp *yt, const Paths &paths, QObject *parent)
     : QObject(parent), m_db(db), m_yt(yt), m_paths(paths)
 {
+    // Rangement différé : regroupe les changements rapprochés en une seule passe.
+    m_placeTimer.setSingleShot(true);
+    m_placeTimer.setInterval(1500);
+    connect(&m_placeTimer, &QTimer::timeout, this, [this] {
+        m_placing = true;
+        m_placeAgain = false;
+        m_placedMoved = m_placedFailed = 0;
+        m_placeQueue = m_db->tracksToPlace(m_paths.library);
+        placeNext();
+    });
 }
 
 void Downloader::resumePending()
@@ -145,7 +155,7 @@ void Downloader::onDone(qint64 id, const YtDlp::DownloadResult &r, const QString
         return;
     }
     if (err.isEmpty() && t) {
-        m_db->setFile(id, r.path, r.codec, r.bitrate, QFileInfo(r.path).size(), r.duration);
+        m_db->setFile(id, QDir::cleanPath(r.path), r.codec, r.bitrate, QFileInfo(r.path).size(), r.duration);
         QString title = r.title, artist = r.artist;
         if (title.isEmpty() && t->title == t->ytId && !r.rawTitle.isEmpty()) {
             // Lien collé : seul l'identifiant de la vidéo était connu.
@@ -154,6 +164,8 @@ void Downloader::onDone(qint64 id, const YtDlp::DownloadResult &r, const QString
             title = split.second.isEmpty() ? r.rawTitle : split.second;
         }
         m_db->enrichMetadata(id, title, artist, r.album);
+        // Téléchargé dans la bibliothèque, puis rangé dans le dossier de sa playlist s'il y a lieu.
+        placeFile(id);
         qInfo() << "en cache :" << t->title << r.codec << r.bitrate << "kb/s";
         emit finished(id, true, {});
         enforceCacheLimit();
@@ -195,6 +207,97 @@ void Downloader::cleanupPartial(const QString &ytId)
     const QDir lib(m_paths.library);
     for (const QString &f : lib.entryList({ytId + ".*"}, QDir::Files))
         QFile::remove(lib.filePath(f));
+}
+
+QString Downloader::fileNameFor(const Track &t, const QString &ext, bool inLibrary)
+{
+    const QString suffix = ext.isEmpty() ? QString() : "." + ext;
+    if (inLibrary)
+        return t.ytId + suffix;
+    // Nom lisible, valable sous Windows, macOS et Linux ; l'id évite les collisions.
+    QString base = t.artist.isEmpty() ? t.title : t.artist + " - " + t.title;
+    QString clean;
+    for (const QChar c : std::as_const(base))
+        clean += (c.unicode() < 32 || QStringLiteral("<>:\"/\\|?*").contains(c)) ? QChar(' ') : c;
+    clean = clean.simplified().left(120);
+    while (clean.endsWith('.') || clean.endsWith(' '))
+        clean.chop(1);
+    return (clean.isEmpty() ? QString() : clean + " ") + "[" + t.ytId + "]" + suffix;
+}
+
+bool Downloader::placeFile(qint64 trackId)
+{
+    const auto t = m_db->track(trackId);
+    if (!t || !t->isLocal())
+        return true;
+    const QString folder = m_db->folderForTrack(trackId);
+    const bool inLibrary = folder.isEmpty();
+    const QString dir = QDir::cleanPath(inLibrary ? m_paths.library : folder);
+    const QString src = QDir::cleanPath(t->filePath);
+    const QString dst = dir + "/" + fileNameFor(*t, QFileInfo(src).suffix(), inLibrary);
+    if (src == dst) {
+        if (t->filePath != dst)
+            m_db->setFilePath(trackId, dst);  // même fichier, chemin normalisé (séparateurs Windows)
+        return true;
+    }
+    if (!QDir().mkpath(dir)) {
+        qWarning() << "rangement impossible, dossier inaccessible :" << dir;
+        return false;
+    }
+    if (QFileInfo::exists(dst)) {
+        // Copie identique laissée par un rangement interrompu : on la reprend.
+        if (QFileInfo(dst).size() == QFileInfo(src).size() && QFile::remove(src)) {
+            m_db->setFilePath(trackId, dst);
+            return true;
+        }
+        qWarning() << "rangement impossible, un autre fichier porte déjà ce nom :" << dst;
+        return false;
+    }
+    if (!QFile::rename(src, dst)) {
+        // Autre disque : copie puis suppression. Fichier en cours de lecture (Windows) : on
+        // annule et on réessaiera plus tard.
+        if (!QFile::copy(src, dst))
+            return false;
+        if (!QFile::remove(src)) {
+            QFile::remove(dst);
+            return false;
+        }
+    }
+    m_db->setFilePath(trackId, dst);
+    qInfo() << "rangé :" << t->title << "→" << dir;
+    return true;
+}
+
+void Downloader::schedulePlacement()
+{
+    if (m_placing) {
+        m_placeAgain = true;
+        return;
+    }
+    if (!m_placeTimer.isActive())
+        m_placeTimer.start();
+}
+
+void Downloader::placeNext()
+{
+    if (m_placeQueue.isEmpty()) {
+        m_placing = false;
+        if (m_placedMoved || m_placedFailed)
+            emit placementDone(m_placedMoved, m_placedFailed);
+        if (m_placeAgain)
+            schedulePlacement();
+        return;
+    }
+    const qint64 id = m_placeQueue.takeFirst();
+    // Un morceau en cours de téléchargement sera rangé à la fin de celui-ci.
+    if (!m_active.contains(id)) {
+        const auto before = m_db->track(id);
+        if (!placeFile(id))
+            ++m_placedFailed;
+        else if (const auto after = m_db->track(id); before && after && QDir::cleanPath(before->filePath) != after->filePath)
+            ++m_placedMoved;
+    }
+    QTimer::singleShot(0, this, &Downloader::placeNext);
 }
 
 void Downloader::removeFile(qint64 trackId)

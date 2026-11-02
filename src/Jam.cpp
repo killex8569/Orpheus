@@ -54,6 +54,34 @@ QList<QNetworkInterface> lanInterfaces()
     return real.isEmpty() ? all : real;
 }
 
+// Jeton aléatoire d'une demande de découverte : seules les réponses qui le portent sont prises.
+QString newNonce()
+{
+    return QString::number(QRandomGenerator::system()->generate64(), 16).rightJustified(16, '0')
+           + QString::number(QRandomGenerator::system()->generate64(), 16).rightJustified(16, '0');
+}
+
+bool isValidNonce(const QString &n)
+{
+    static const QRegularExpression re(QStringLiteral("^[0-9a-f]{16,64}$"));
+    return re.match(n).hasMatch();
+}
+
+// Adresses de diffusion de chaque interface (plus fiables que 255.255.255.255 seule),
+// et la machine elle-même (Jam lancé sur le même ordinateur).
+QList<QHostAddress> broadcastTargets()
+{
+    QList<QHostAddress> targets{QHostAddress::Broadcast, QHostAddress::LocalHost};
+    for (const QNetworkInterface &iface : lanInterfaces()) {
+        if (!(iface.flags() & QNetworkInterface::CanBroadcast))
+            continue;
+        for (const QNetworkAddressEntry &e : iface.addressEntries())
+            if (e.ip().protocol() == QAbstractSocket::IPv4Protocol && !e.broadcast().isNull() && !targets.contains(e.broadcast()))
+                targets << e.broadcast();
+    }
+    return targets;
+}
+
 // Extrait les lignes complètes du tampon ; false si le tampon déborde.
 bool takeLines(QByteArray &buffer, QList<QJsonObject> &out)
 {
@@ -89,6 +117,27 @@ QString codeProof(const QString &code, const QString &nonce)
 {
     return QString::fromLatin1(
         QMessageAuthenticationCode::hash(nonce.toUtf8(), code.toUtf8(), QCryptographicHash::Sha256).toHex());
+}
+
+bool jamNameMatches(const QString &requested, const QString &jamName)
+{
+    const QString r = requested.simplified().toCaseFolded(), n = jamName.simplified().toCaseFolded();
+    return !r.isEmpty() && (n == r || n == QStringLiteral("jam de ") + r);
+}
+
+bool isLanAddress(const QHostAddress &address)
+{
+    bool ok = false;
+    const QHostAddress a(address.toIPv4Address(&ok));
+    if (!ok)
+        return false;
+    if (a.isLoopback())
+        return true;
+    for (const QNetworkInterface &iface : lanInterfaces())
+        for (const QNetworkAddressEntry &e : iface.addressEntries())
+            if (e.ip().protocol() == QAbstractSocket::IPv4Protocol && a.isInSubnet(e.ip(), e.prefixLength()))
+                return true;
+    return false;
 }
 
 bool isValidYtId(const QString &id)
@@ -211,6 +260,9 @@ JamSession::JamSession(QObject *parent) : QObject(parent)
         if (connecting())
             endSession(QStringLiteral("Impossible de joindre le Jam (délai dépassé)"), true);
     });
+    // Demandes régulières pendant la recherche : les hôtes répondent directement.
+    m_probeTimer.setInterval(3000);
+    connect(&m_probeTimer, &QTimer::timeout, this, [this] { sendProbe({}, m_listNonce); });
     m_expireTimer.setInterval(2000);
     connect(&m_expireTimer, &QTimer::timeout, this, [this] {
         const qint64 limit = nowMs() - 7000;
@@ -312,6 +364,8 @@ bool JamSession::host(const QString &jamName, const QString &myName, const QStri
     m_state.members.append({m_myId, clip(myName, 40), false});
     m_beaconTimer.start();
     m_hostTick.start();
+    m_queryLog.clear();
+    listenForQueries();
     sendBeacon();
     emit roleChanged();
     broadcastState();
@@ -485,12 +539,20 @@ QString JamSession::memberName(int id) const
 void JamSession::applyAdd(int memberId, const QJsonArray &arr)
 {
     const bool finished = !m_state.current();
+    // Morceau déjà en cours ou à venir : pas de doublon (double-clic, ajouts simultanés…).
+    // Un morceau déjà passé peut être remis en file pour être réécouté.
+    auto upcoming = [this](const QString &ytId) {
+        for (int i = qMax(0, m_state.index); i < m_state.items.size(); ++i)
+            if (m_state.items[i].ytId == ytId)
+                return true;
+        return false;
+    };
     QList<Item> added;
     for (const QJsonValue &v : arr) {
         if (m_state.items.size() >= MaxItems)
             break;
         auto it = Item::fromJson(v.toObject());
-        if (!it)
+        if (!it || upcoming(it->ytId))
             continue;
         it->id = m_nextItemId++;
         it->addedBy = memberName(memberId);
@@ -659,16 +721,7 @@ void JamSession::sendBeacon()
                                                       {"port", int(m_server->serverPort())},
                                                       {"members", int(m_state.members.size())}})
                                 .toJson(QJsonDocument::Compact);
-    // Adresse de diffusion de chaque interface (plus fiable que 255.255.255.255 seule).
-    QList<QHostAddress> targets{QHostAddress::Broadcast};
-    for (const QNetworkInterface &iface : lanInterfaces()) {
-        if (!(iface.flags() & QNetworkInterface::CanBroadcast))
-            continue;
-        for (const QNetworkAddressEntry &e : iface.addressEntries())
-            if (e.ip().protocol() == QAbstractSocket::IPv4Protocol && !e.broadcast().isNull() && !targets.contains(e.broadcast()))
-                targets << e.broadcast();
-    }
-    for (const QHostAddress &t : targets)
+    for (const QHostAddress &t : broadcastTargets())
         m_discovery->writeDatagram(data, t, DiscoveryPort);
 }
 
@@ -699,6 +752,7 @@ void JamSession::leave()
         m_code.clear();
         m_failures.clear();
         m_banned.clear();
+        m_queryLog.clear();
         m_state = State();
         emit roleChanged();
         emit stateChanged();
@@ -823,22 +877,69 @@ void JamSession::endSession(const QString &message, bool error)
 }
 
 // ---------- Découverte ----------
+//
+// Deux mécanismes, sans aucun secret échangé (le code d'accès n'est vérifié qu'à la
+// connexion, par défi) :
+//  - l'hôte diffuse une annonce toutes les 2 s sur DiscoveryPort ;
+//  - l'invité diffuse une demande « qui héberge le Jam X ? » (X vide = tous) depuis un
+//    port libre, avec un jeton aléatoire ; l'hôte concerné répond directement à cette
+//    adresse. Les pare-feu laissent en général passer ces réponses, même quand ils
+//    bloquent les annonces.
+// L'hôte ne répond qu'aux machines de son réseau local, pas aux appareils bloqués pour
+// mauvais codes, et pas plus de 20 fois par 10 s à la même adresse.
+
+namespace {
+
+// Annonce ou réponse d'un hôte ; nullopt si invalide (données venues du réseau).
+std::optional<Discovered> parseAnnounce(const QHostAddress &sender, const QJsonObject &o)
+{
+    const int port = o.value("port").toInt();
+    if (o.value("orpheusJam").toInt() != ProtocolVersion || port <= 0 || port > 65535)
+        return std::nullopt;
+    bool ok = false;
+    const QHostAddress addr(sender.toIPv4Address(&ok));
+    if (!ok)
+        return std::nullopt;
+    return Discovered{clip(o.value("id").toString(), 32), clip(o.value("name").toString(), 80), addr, quint16(port),
+                      qBound(0, o.value("members").toInt(), MaxMembers), nowMs()};
+}
+
+constexpr int kQueryBurst = 20;          // réponses au plus par adresse…
+constexpr qint64 kQueryWindowMs = 10000;  // …sur cette durée
+constexpr int kLookupMs = 1800;           // durée d'une recherche par nom
+
+}  // namespace
+
+void JamSession::listenForQueries()
+{
+    if (!m_discovery) {
+        m_discovery = new QUdpSocket(this);
+        connect(m_discovery, &QUdpSocket::readyRead, this, &JamSession::readDiscovery);
+    }
+    // Port partagé : un Orpheus qui cherche des Jams sur la même machine peut aussi l'ouvrir.
+    if (m_discovery->state() != QAbstractSocket::BoundState)
+        m_discovery->bind(QHostAddress::AnyIPv4, DiscoveryPort, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint);
+}
 
 void JamSession::setDiscovering(bool on)
 {
     if (on && !m_expireTimer.isActive()) {
-        if (!m_discovery) {
-            m_discovery = new QUdpSocket(this);
-            connect(m_discovery, &QUdpSocket::readyRead, this, &JamSession::readDiscovery);
-        }
-        if (m_discovery->state() != QAbstractSocket::BoundState)
-            m_discovery->bind(QHostAddress::AnyIPv4, DiscoveryPort, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint);
+        listenForQueries();
         m_expireTimer.start();
+        m_listNonce = newNonce();
+        sendProbe({}, m_listNonce);
+        m_probeTimer.start();
     } else if (!on && m_expireTimer.isActive()) {
         m_expireTimer.stop();
+        m_probeTimer.stop();
+        m_listNonce.clear();
         if (m_discovery && m_role != Host) {
             delete m_discovery;
             m_discovery = nullptr;
+        }
+        if (m_probe && m_lookupNonce.isEmpty()) {
+            delete m_probe;
+            m_probe = nullptr;
         }
         m_discovered.clear();
         emit discoveredChanged();
@@ -849,29 +950,134 @@ void JamSession::readDiscovery()
 {
     while (m_discovery && m_discovery->hasPendingDatagrams()) {
         const QNetworkDatagram dg = m_discovery->receiveDatagram(4096);
-        if (!m_expireTimer.isActive())
-            continue;  // socket ouvert pour émettre seulement (hôte)
         const QJsonObject o = QJsonDocument::fromJson(dg.data()).object();
-        const int port = o.value("port").toInt();
-        if (o.value("orpheusJam").toInt() != ProtocolVersion || port <= 0 || port > 65535)
+        if (o.contains("orpheusJamQuery")) {
+            answerQuery(dg.senderAddress(), quint16(dg.senderPort()), o);
             continue;
-        bool ok = false;
-        const QHostAddress addr(dg.senderAddress().toIPv4Address(&ok));
-        if (!ok)
-            continue;
-        Discovered d{clip(o.value("id").toString(), 32), clip(o.value("name").toString(), 80), addr, quint16(port),
-                     o.value("members").toInt(), nowMs()};
-        // Même Jam reçu par plusieurs chemins : une seule entrée, première adresse conservée.
-        bool known = false;
-        for (Discovered &e : m_discovered)
-            if (d.id.isEmpty() ? (e.address == d.address && e.port == d.port) : e.id == d.id) {
-                d.address = e.address;
-                d.port = e.port;
-                e = d;
-                known = true;
-            }
-        if (!known)
-            m_discovered.append(d);
-        emit discoveredChanged();
+        }
+        if (!m_expireTimer.isActive())
+            continue;  // socket ouvert pour l'hôte seulement
+        if (const auto d = parseAnnounce(dg.senderAddress(), o))
+            mergeDiscovered(*d);
     }
+}
+
+void JamSession::answerQuery(const QHostAddress &from, quint16 port, const QJsonObject &query)
+{
+    if (m_role != Host || !m_server || !m_discovery || port == 0)
+        return;
+    if (query.value("orpheusJamQuery").toInt() != ProtocolVersion)
+        return;
+    bool ok = false;
+    const quint32 ip = from.toIPv4Address(&ok);
+    // Réseau local uniquement, et jamais un appareil bloqué pour mauvais codes.
+    if (!ok || !isLanAddress(from) || m_banned.contains(ip))
+        return;
+    const QString nonce = query.value("nonce").toString();
+    const QString wanted = clip(query.value("name").toString(), 80);
+    if (!isValidNonce(nonce) || (!wanted.isEmpty() && !jamNameMatches(wanted, m_state.name)))
+        return;
+    // Limite par adresse (pas d'inondation de réponses), table bornée.
+    const qint64 now = nowMs();
+    if (m_queryLog.size() > 256)
+        m_queryLog.removeIf([now](const auto &it) { return it.value().isEmpty() || it.value().last() < now - kQueryWindowMs; });
+    QList<qint64> &log = m_queryLog[ip];
+    log.removeIf([now](qint64 t) { return t < now - kQueryWindowMs; });
+    if (log.size() >= kQueryBurst)
+        return;
+    log.append(now);
+    const QByteArray reply = QJsonDocument(QJsonObject{{"orpheusJam", ProtocolVersion},
+                                                       {"id", m_jamId},
+                                                       {"name", m_state.name},
+                                                       {"port", int(m_server->serverPort())},
+                                                       {"members", int(m_state.members.size())},
+                                                       {"nonce", nonce}})
+                                 .toJson(QJsonDocument::Compact);
+    m_discovery->writeDatagram(reply, QHostAddress(ip), port);
+}
+
+void JamSession::ensureProbe()
+{
+    if (m_probe)
+        return;
+    m_probe = new QUdpSocket(this);
+    m_probe->bind(QHostAddress::AnyIPv4, 0);
+    connect(m_probe, &QUdpSocket::readyRead, this, &JamSession::readProbe);
+}
+
+void JamSession::sendProbe(const QString &name, const QString &nonce)
+{
+    if (nonce.isEmpty())
+        return;
+    ensureProbe();
+    const QByteArray data =
+        QJsonDocument(QJsonObject{{"orpheusJamQuery", ProtocolVersion}, {"name", name}, {"nonce", nonce}}).toJson(QJsonDocument::Compact);
+    for (const QHostAddress &t : broadcastTargets())
+        m_probe->writeDatagram(data, t, DiscoveryPort);
+}
+
+void JamSession::lookup(const QString &name)
+{
+    m_lookupName = clip(name, 80);
+    m_lookupNonce = newNonce();
+    m_lookupFound.clear();
+    const QString nonce = m_lookupNonce;
+    // Trois envois espacés (un datagramme peut se perdre), puis bilan.
+    sendProbe(m_lookupName, nonce);
+    for (int delay : {400, 900})
+        QTimer::singleShot(delay, this, [this, nonce] {
+            if (m_lookupNonce == nonce)
+                sendProbe(m_lookupName, nonce);
+        });
+    QTimer::singleShot(kLookupMs, this, [this, nonce] {
+        if (m_lookupNonce != nonce)
+            return;  // recherche remplacée par une plus récente
+        const QString name = m_lookupName;
+        const QList<Discovered> found = std::exchange(m_lookupFound, {});
+        m_lookupNonce.clear();
+        if (m_probe && !m_expireTimer.isActive()) {
+            m_probe->deleteLater();
+            m_probe = nullptr;
+        }
+        emit lookupFinished(name, found);
+    });
+}
+
+void JamSession::readProbe()
+{
+    while (m_probe && m_probe->hasPendingDatagrams()) {
+        const QNetworkDatagram dg = m_probe->receiveDatagram(4096);
+        const QJsonObject o = QJsonDocument::fromJson(dg.data()).object();
+        const QString nonce = o.value("nonce").toString();
+        const auto d = parseAnnounce(dg.senderAddress(), o);
+        // Seules les réponses à nos propres demandes sont prises en compte.
+        if (!d || nonce.isEmpty())
+            continue;
+        if (nonce == m_lookupNonce && jamNameMatches(m_lookupName, d->name)) {
+            const bool known = std::any_of(m_lookupFound.cbegin(), m_lookupFound.cend(), [&d](const Discovered &e) {
+                return d->id.isEmpty() ? (e.address == d->address && e.port == d->port) : e.id == d->id;
+            });
+            if (!known)
+                m_lookupFound.append(*d);
+        }
+        if ((nonce == m_listNonce || nonce == m_lookupNonce) && m_expireTimer.isActive())
+            mergeDiscovered(*d);
+    }
+}
+
+void JamSession::mergeDiscovered(const Discovered &found)
+{
+    Discovered d = found;
+    // Même Jam reçu par plusieurs chemins : une seule entrée, première adresse conservée.
+    bool known = false;
+    for (Discovered &e : m_discovered)
+        if (d.id.isEmpty() ? (e.address == d.address && e.port == d.port) : e.id == d.id) {
+            d.address = e.address;
+            d.port = e.port;
+            e = d;
+            known = true;
+        }
+    if (!known)
+        m_discovered.append(d);
+    emit discoveredChanged();
 }

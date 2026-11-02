@@ -2,9 +2,12 @@
 
 #include <QClipboard>
 #include <QDebug>
+#include <QDir>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QLocale>
 #include <QRandomGenerator>
+#include <QTemporaryFile>
 #include <QUrl>
 #include <algorithm>
 
@@ -36,6 +39,15 @@ bool Backend::init(QString *error)
         emit toast(msg, true);
     });
     m_dl = new Downloader(&m_db, m_yt, m_paths, this);
+    connect(m_dl, &Downloader::placementDone, this, [this](int moved, int failed) {
+        if (failed > 0)
+            emit toast(QStringLiteral("%1 fichier(s) n'ont pas pu être déplacés (dossier inaccessible ou morceau en cours "
+                                      "de lecture) : nouvel essai au prochain changement ou au prochain lancement").arg(failed),
+                       true);
+        else if (moved > 0)
+            emit toast(QStringLiteral("%1 fichier(s) rangé(s)").arg(moved), false);
+        refreshPlaylists();
+    });
     m_spotify = new Spotify(&m_db, this);
     m_player = new Player(&m_db, m_dl, m_yt, this);
     m_resolver = std::make_unique<TrackResolver>(&m_db, m_yt);
@@ -176,6 +188,11 @@ QString Backend::cacheInfo() const
 
 void Backend::refreshPlaylists()
 {
+    // Playlists, dossiers ou ordre modifiés : les fichiers concernés sont rangés.
+    if (m_db.layoutVersion() != m_placedLayout) {
+        m_placedLayout = m_db.layoutVersion();
+        m_dl->schedulePlacement();
+    }
     m_playlists.clear();
     for (const Playlist &p : m_db.playlists())
         m_playlists.append(p.toMap());
@@ -329,6 +346,14 @@ void Backend::play(const QString &list, int row)
         return;
     }
     if (m_jam->active()) {
+        // Déjà dans le Jam (en cours ou à venir) : on le lit au lieu de l'ajouter en double.
+        if (const int at = m_jam->upcomingIndex(t->ytId); at >= 0 && !t->ytId.isEmpty()) {
+            if (at != m_jam->currentIndex())
+                m_jam->jumpTo(at);
+            else if (!m_jam->playing())
+                m_jam->togglePlay();
+            return;
+        }
         addToJam({*t});
         return;
     }
@@ -528,6 +553,8 @@ void Backend::addToJam(const QList<Track> &tracks)
             }
             if (m_jam->add({*r}))
                 emit toast(QStringLiteral("Ajouté au Jam : %1").arg(r->title), false);
+            else
+                emit toast(QStringLiteral("Déjà dans le Jam : %1").arg(r->title), false);
         });
     }
     if (ready.isEmpty())
@@ -537,6 +564,10 @@ void Backend::addToJam(const QList<Track> &tracks)
         emit toast(QStringLiteral("Ajouté au Jam : %1").arg(ready.first().title), false);
     else if (n > 1)
         emit toast(QStringLiteral("%1 morceaux ajoutés au Jam").arg(n), false);
+    else if (ready.size() == 1)
+        emit toast(QStringLiteral("Déjà dans le Jam : %1").arg(ready.first().title), false);
+    else
+        emit toast(QStringLiteral("Ces morceaux sont déjà dans le Jam"), false);
 }
 
 // ---------- Playlists ----------
@@ -636,18 +667,63 @@ void Backend::renamePlaylist(qint64 id, const QString &name)
 
 void Backend::movePlaylist(qint64 id, int index)
 {
+    // Toutes les playlists se déplacent, « Cache local » compris (comme les salons Discord).
     QList<qint64> ids;
     for (const Playlist &p : m_db.playlists())
-        if (p.kind != QLatin1String("cache"))
-            ids << p.id;
+        ids << p.id;
     const int from = int(ids.indexOf(id));
-    // Les index de la barre latérale comptent « Cache local », toujours en premier.
-    const int to = qBound(0, index - 1, int(ids.size()) - 1);
+    const int to = qBound(0, index, int(ids.size()) - 1);
     if (from < 0 || from == to)
         return;
     ids.move(from, to);
     m_db.setPlaylistOrder(ids);
     refreshPlaylists();
+}
+
+void Backend::setPlaylistFolder(qint64 id, const QString &folder)
+{
+    const auto p = m_db.playlist(id);
+    if (!p || p->kind == QLatin1String("cache"))
+        return;
+    QString path = folder.trimmed();
+    if (path.startsWith(QLatin1String("file:")))
+        path = QUrl(path).toLocalFile();
+    path = path.isEmpty() ? QString() : QDir::cleanPath(QDir::fromNativeSeparators(path));
+    if (!path.isEmpty()) {
+        const QFileInfo info(path);
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+        const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+        const Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+        const QString data = QDir::cleanPath(m_paths.data);
+        if (!info.isAbsolute() || info.isRoot()) {
+            emit toast(QStringLiteral("Choisissez un dossier précis (pas la racine d'un disque)"), true);
+            return;
+        }
+        if (path.compare(data, cs) == 0 || path.startsWith(data + "/", cs)) {
+            emit toast(QStringLiteral("Ce dossier appartient déjà à Orpheus : choisissez-en un autre"), true);
+            return;
+        }
+        // Dossier créé au besoin, puis essai d'écriture (droits, disque en lecture seule…).
+        QTemporaryFile probe(path + "/.orpheus-XXXXXX");
+        if (!QDir().mkpath(path) || !probe.open()) {
+            emit toast(QStringLiteral("Impossible d'écrire dans « %1 »").arg(QDir::toNativeSeparators(path)), true);
+            return;
+        }
+    }
+    if (path == p->folder)
+        return;
+    m_db.setPlaylistFolder(id, path);
+    emit toast(path.isEmpty() ? QStringLiteral("« %1 » : morceaux remis dans la bibliothèque d'Orpheus").arg(p->name)
+                              : QStringLiteral("« %1 » : morceaux rangés dans %2").arg(p->name, QDir::toNativeSeparators(path)),
+               false);
+    refreshPlaylists();
+}
+
+QString Backend::folderUrl(const QString &path) const
+{
+    return QUrl::fromLocalFile(path.isEmpty() ? m_paths.library : path).toString();
 }
 
 void Backend::deletePlaylist(qint64 id)

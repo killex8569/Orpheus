@@ -24,7 +24,7 @@ Download the installer from the [latest release](https://github.com/killex8569/O
 - **Windows 10/11 (x64)**: `Orpheus-x.y.z-windows-x64-setup.exe`. No administrator rights needed; installs into `%LOCALAPPDATA%\Programs\Orpheus`. Uninstall from "Installed apps". Windows SmartScreen may warn about an unknown publisher: "More info" → "Run anyway".
 - **macOS 15+ (Apple Silicon)**: `Orpheus-x.y.z-macos-arm64.dmg`, then drag Orpheus into Applications. The app is not notarized by Apple: on first launch, open it, then go to System Settings → Privacy & Security → "Open Anyway".
 
-To update, run the new installer: your tracks and playlists are kept (`%LOCALAPPDATA%\orpheus` on Windows, `~/Library/Application Support/orpheus` on macOS). No MPRIS outside Linux; media keys work while the window has focus.
+To update, run the new installer: your tracks and playlists are kept (see [Data](#data) for where they live). No MPRIS outside Linux; media keys work while the window has focus.
 
 The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Setup on Windows, Homebrew + macdeployqt on macOS). Pushing a `v*` tag attaches them to the release.
 
@@ -33,7 +33,8 @@ The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Set
 - **Search** on YouTube (default) or Spotify (selectable in the settings, or with the toggle next to the search bar). A pasted YouTube link plays directly. Tracks already on disk appear first ("Déjà en local").
 - **Local cache** ("Cache local" playlist): every track you play is downloaded **once**, then played from disk. Before any search, Orpheus checks whether the track is already known: by YouTube id, by Spotify id, by an "artist|title" key, or through previously stored matches.
 - **Personal playlists**: create, rename, reorder their tracks (right-click → Monter/Descendre), delete. Their tracks are never removed from the cache.
-- **Sidebar**: the "Musique" and "Playlists" sections fold like Discord categories (click the title); a folded section still shows the open item and anything that needs attention (Jam in progress, update available). The state is remembered. Playlists can be reordered by drag and drop, or right-click → Monter/Descendre ("Cache local" stays first).
+- **Sidebar**: the "Musique" and "Playlists" sections fold like Discord categories (click the title); a folded section still shows the open item and anything that needs attention (Jam in progress, update available). The state is remembered. Every playlist, "Cache local" included, can be reordered by drag and drop, or right-click → Monter/Descendre.
+- **Folder per playlist**: on a playlist's page, "Choisir un dossier…" stores its tracks in a folder of your choice (another disk, your Music folder…), named `Artist - Title [id].opus`. Already downloaded tracks are moved there, and new ones follow. A track in several playlists that have a folder goes to the first of them in the sidebar order. "Par défaut" moves them back into Orpheus's library. Orpheus only moves its own files and never overwrites an existing one.
   To avoid duplicates, search results already in the playlist you are filling (the last one opened or added to) are greyed out, including other versions of the same title. In "Ajouter à une playlist", playlists that already contain the track are disabled.
 - **Shuffle**: the "Aléatoire" button in a playlist is a toggle. When it is on, the **whole** playlist is shuffled. When it is off, the original order comes back and playback continues from the current track.
 - **Imports**:
@@ -44,6 +45,8 @@ The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Set
     Each track is matched on YouTube with a score (title, artist, duration; live, cover, remix and similar versions are rejected).
   - "Synchroniser" adds new tracks without duplicates. Imported tracks also go into the "Cache local" playlist.
 - **Lyrics** (`L` key, or the microphone button): synced lyrics from [LRCLIB](https://lrclib.net), free and with no account. The current line is highlighted, and clicking a line jumps to that part of the track. Plain-text lyrics are shown when no synced version exists. Lyrics are saved in the database, so they work **offline**: they are fetched automatically for every track kept locally, in the background, at the pace LRCLIB allows.
+- **Jam** (shared listening on the local network): the host picks a name and a 4-digit code; friends join with the **name** and the code, with no IP address to type (an IP address still works as a fallback). Only synchronization goes over the network; everyone plays the track from their own disk. Playing a track that is already in the Jam jumps to it instead of adding a duplicate.
+  Security: the code never travels in clear (challenge-response), 3 wrong codes block the device for the rest of the Jam, and the host only answers name lookups from its own local network, never from a blocked device, and at a limited rate. If two Jams answer to the same name, Orpheus refuses to pick one; creating a Jam checks that the name is free first.
 - **Statistics**: a play counts once **more than half** of the track has really been listened to (pauses and seeks excluded). The view shows listening time, plays, distinct tracks and artists, a top artists list (grouped regardless of case or "feat."), and top tracks, over 7 days, 30 days, 12 months, or all time.
 - **Quality**: the best audio stream (Opus ~130-160 kb/s, 256 kb/s with YouTube Premium) is kept without re-encoding. Exclusive (bit-perfect) mode is available. Note: LDAC is a Bluetooth codec, not a file quality setting.
 - **Shortcuts**: `Space` play/pause, `Ctrl+K` search, `←/→` ±10 s, `Shift+←/→` previous/next, `↑/↓` volume, `S` shuffle, `R` repeat, multimedia keys.
@@ -68,18 +71,32 @@ Other safeguards: queue resumes after a restart, automatic retries (10 s, then 4
 
 ## yt-dlp
 
-YouTube changes often. In Paramètres → yt-dlp, "Installer / mettre à jour yt-dlp" installs a copy managed by Orpheus (`~/.local/share/orpheus/bin/yt-dlp`), which is then updated automatically at every launch.
+YouTube changes often. In Paramètres → yt-dlp, "Installer / mettre à jour yt-dlp" installs a copy managed by Orpheus, in the `bin/` folder of the [data folder](#data) (`yt-dlp.exe` on Windows). It is installed automatically on first launch, then updated at every launch.
 
 ## Data
 
-`~/.local/share/orpheus/` (or `$ORPHEUS_HOME`):
+Your tracks, playlists and settings live in a data folder of their own, never in the program folder: updating or uninstalling Orpheus leaves them alone (unless you answer "Yes" when the Windows uninstaller offers to delete them).
+
+| System | Data folder | Program |
+|---|---|---|
+| Linux | `~/.local/share/orpheus/` | `~/.local/bin/orpheus` |
+| Windows | `%LOCALAPPDATA%\orpheus\` (`C:\Users\<you>\AppData\Local\orpheus\`) | `%LOCALAPPDATA%\Programs\Orpheus\` |
+| macOS | `~/Library/Application Support/orpheus/` | `/Applications/Orpheus.app` |
+
+`ORPHEUS_HOME=<dir>` uses another data folder (any system).
+
+Inside the data folder:
 
 | Path | Contents |
 |---|---|
-| `orpheus.db` | SQLite: tracks, playlists, settings, imports |
-| `library/` | audio files `<youtube-id>.opus` (embedded metadata) |
+| `orpheus.db` | SQLite: tracks, playlists, settings, imports, statistics |
+| `library/` | audio files `<youtube-id>.opus` (embedded title, artist and album) |
 | `covers/` | album covers |
-| `bin/` | copy of yt-dlp managed by Orpheus (optional) |
+| `bin/` | copy of yt-dlp managed by Orpheus |
+
+Tracks of a playlist with its own folder (see "Folder per playlist") are stored in that folder instead of `library/`.
+
+Hidden folders: on Windows, `AppData` is hidden: press `Win + R` and type `%LOCALAPPDATA%\orpheus`. On macOS, `~/Library` is hidden: in the Finder, `Cmd + Shift + G` and paste the path.
 
 ## Code
 
@@ -95,7 +112,7 @@ YouTube changes often. In Paramètres → yt-dlp, "Installer / mettre à jour yt
 | `qml/` | interface (views, track list, player bar) |
 | `tests/` | unit tests (`./build/orpheus_tests`) |
 
-Development tools (environment variables): `ORPHEUS_HOME=<dir>` (separate data), `ORPHEUS_DEMO_SEARCH="query"` (searches and plays the first result), `ORPHEUS_DEMO_IMPORT=<url>`, `ORPHEUS_SCREENSHOT=out.png` (captures the window after `ORPHEUS_SCREENSHOT_DELAY` ms, then quits). On KDE, add `QT_FORCE_STDERR_LOGGING=1` to see the logs in the terminal.
+Development tools (environment variables): `ORPHEUS_HOME=<dir>` (separate data), `ORPHEUS_DEMO_SEARCH="query"` (searches and plays the first result), `ORPHEUS_DEMO_IMPORT=<url>`, `ORPHEUS_SCREENSHOT=out.png` (captures the window after `ORPHEUS_SCREENSHOT_DELAY` ms, then quits), `ORPHEUS_VIEW=jam` or `ORPHEUS_VIEW=playlist:<id>` (view shown at startup). On KDE, add `QT_FORCE_STDERR_LOGGING=1` to see the logs in the terminal.
 test
 test
 test

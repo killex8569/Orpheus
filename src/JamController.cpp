@@ -1,6 +1,7 @@
 #include "JamController.h"
 
 #include <QDebug>
+#include <QRegularExpression>
 
 namespace {
 // Écarts tolérés avant un saut (au-dessous : rattrapage par la vitesse).
@@ -17,6 +18,7 @@ JamController::JamController(Database *db, Player *player, const Paths *paths, Q
     connect(&m_session, &JamSession::stateChanged, this, &JamController::onStateChanged);
     connect(&m_session, &JamSession::discoveredChanged, this, &JamController::discoveredChanged);
     connect(&m_session, &JamSession::notice, this, &JamController::toast);
+    connect(&m_session, &JamSession::lookupFinished, this, &JamController::onLookupFinished);
     connect(m_player, &Player::endReached, this, [this](qint64 trackId) {
         m_endedTrack = trackId;  // fin normale : ne pas le recharger en attendant le suivant
         const Jam::Item *cur = m_session.state().current();
@@ -87,20 +89,82 @@ QVariantList JamController::discovered() const
 
 // ---------- Session ----------
 
-void JamController::create(const QString &code)
+QString JamController::defaultJamName() const
 {
-    const QString me = myName().isEmpty() ? QStringLiteral("Hôte") : myName();
-    QString err;
-    if (!m_session.host(QStringLiteral("Jam de %1").arg(me), me, code.trimmed(), Jam::SessionPort, &err))
-        emit toast(QStringLiteral("Impossible de créer le Jam : %1").arg(err), true);
-    else
-        emit toast(QStringLiteral("Jam créé : vos amis sur le même réseau peuvent le rejoindre"), false);
+    return QStringLiteral("Jam de %1").arg(myName().isEmpty() ? QStringLiteral("Hôte") : myName());
+}
+
+void JamController::create(const QString &code, const QString &name)
+{
+    if (lookingUp())
+        return;
+    if (!Jam::isValidCode(code.trimmed())) {
+        emit toast(QStringLiteral("Le code doit faire exactement 4 chiffres"), true);
+        return;
+    }
+    const QString jamName = name.simplified().isEmpty() ? defaultJamName() : name.simplified().left(40);
+    // Nom vérifié libre d'abord : deux Jams du même nom seraient impossibles à distinguer.
+    m_pending = Pending::Create;
+    m_pendingName = jamName;
+    m_pendingCode = code.trimmed();
+    emit lookingUpChanged();
+    m_session.lookup(jamName);
+}
+
+void JamController::onLookupFinished(const QString &name, const QList<Jam::Discovered> &found)
+{
+    if (m_pending == Pending::None || name != m_pendingName)
+        return;
+    const Pending what = std::exchange(m_pending, Pending::None);
+    const QString code = std::exchange(m_pendingCode, {});
+    m_pendingName.clear();
+    emit lookingUpChanged();
+    if (what == Pending::Create) {
+        if (!found.isEmpty()) {
+            emit toast(QStringLiteral("Un Jam « %1 » existe déjà sur ce réseau : choisissez un autre nom").arg(found.first().name), true);
+            return;
+        }
+        const QString me = myName().isEmpty() ? QStringLiteral("Hôte") : myName();
+        QString err;
+        if (!m_session.host(name, me, code, Jam::SessionPort, &err))
+            emit toast(QStringLiteral("Impossible de créer le Jam : %1").arg(err), true);
+        else
+            emit toast(QStringLiteral("Jam « %1 » créé : vos amis peuvent le rejoindre avec ce nom et le code").arg(name), false);
+        return;
+    }
+    if (found.isEmpty()) {
+        emit toast(QStringLiteral("Aucun Jam « %1 » sur ce réseau. Vérifiez le nom et que vous êtes sur le même Wi-Fi, "
+                                  "ou saisissez l'adresse IP affichée chez l'hôte.").arg(name),
+                   true);
+    } else if (found.size() > 1) {
+        // Plusieurs réponses pour un même nom : peut-être une usurpation. On ne choisit pas
+        // à la place de l'utilisateur.
+        emit toast(QStringLiteral("Plusieurs Jams s'appellent « %1 » : demandez son adresse IP à l'hôte et "
+                                  "choisissez-le dans la liste").arg(name),
+                   true);
+    } else {
+        m_session.join(found.first().address, found.first().port, myName(), code);
+    }
 }
 
 void JamController::join(const QString &text, const QString &code)
 {
+    if (lookingUp())
+        return;
     if (!Jam::isValidCode(code.trimmed())) {
         emit toast(QStringLiteral("Saisissez le code du Jam : 4 chiffres"), true);
+        return;
+    }
+    // Pas une adresse IP : c'est le nom du Jam, recherché sur le réseau local.
+    static const QRegularExpression ipv4(QStringLiteral("^\\d{1,3}(\\.\\d{1,3}){3}(:\\d{1,5})?$"));
+    if (const QString t = text.trimmed(); !ipv4.match(t).hasMatch()) {
+        if (t.isEmpty())
+            return;
+        m_pending = Pending::Join;
+        m_pendingName = t.simplified().left(80);
+        m_pendingCode = code.trimmed();
+        emit lookingUpChanged();
+        m_session.lookup(m_pendingName);
         return;
     }
     QString host = text.trimmed();
@@ -327,12 +391,24 @@ void JamController::tick()
 
 // ---------- Commandes ----------
 
+int JamController::upcomingIndex(const QString &ytId) const
+{
+    const Jam::State &st = m_session.state();
+    for (int i = qMax(0, st.index); i < st.items.size(); ++i)
+        if (st.items[i].ytId == ytId)
+            return i;
+    return -1;
+}
+
 int JamController::add(const QList<Track> &tracks)
 {
     QList<Jam::Item> items;
+    QSet<QString> seen;
     for (const Track &t : tracks) {
-        if (!Jam::isValidYtId(t.ytId))
+        // Déjà en cours ou à venir dans le Jam (ou en double dans l'envoi) : ignoré.
+        if (!Jam::isValidYtId(t.ytId) || upcomingIndex(t.ytId) >= 0 || seen.contains(t.ytId))
             continue;
+        seen.insert(t.ytId);
         Jam::Item it;
         it.ytId = t.ytId;
         it.title = t.title;

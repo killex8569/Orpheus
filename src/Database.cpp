@@ -1,6 +1,8 @@
 #include "Database.h"
 
 #include <QDateTime>
+#include <QDir>
+#include <QSet>
 #include <QDebug>
 #include <QLocale>
 #include <algorithm>
@@ -32,7 +34,8 @@ QVariantMap Playlist::toMap() const
             {"totalDuration", totalDuration},
             {"durationText", formatTime(totalDuration)},
             {"diskSize", diskSize},
-            {"diskSizeText", QLocale().formattedDataSize(diskSize)}};
+            {"diskSizeText", QLocale().formattedDataSize(diskSize)},
+            {"folder", folder}};
 }
 
 QVariantMap ImportJob::toMap() const
@@ -151,15 +154,18 @@ bool Database::open(const QString &path, QString *error)
     for (QSqlQuery st = exec(d, "SELECT key, value FROM settings"); st.next();)
         m_settings.insert(st.value(0).toString(), st.value(1).toString());
     // Ordre des playlists choisi par l'utilisateur (ajouté en 1.0.2) ; les playlists
-    // existantes gardent leur ordre alphabétique d'origine.
-    bool hasOrder = false;
+    // existantes gardent leur ordre d'origine (« Cache local », puis ordre alphabétique).
+    // Dossier choisi pour les fichiers d'une playlist (1.2.0 ; vide = bibliothèque d'Orpheus).
+    QSet<QString> columns;
     for (QSqlQuery c = exec(d, "PRAGMA table_info(playlists)"); c.next();)
-        hasOrder |= c.value(1).toString() == QLatin1String("sort_order");
-    if (!hasOrder)
+        columns.insert(c.value(1).toString());
+    if (!columns.contains(QStringLiteral("sort_order")))
         exec(d, "ALTER TABLE playlists ADD COLUMN sort_order INTEGER");
+    if (!columns.contains(QStringLiteral("folder")))
+        exec(d, "ALTER TABLE playlists ADD COLUMN folder TEXT");
     {
         QList<qint64> unordered;
-        for (QSqlQuery u = exec(d, "SELECT id FROM playlists WHERE sort_order IS NULL ORDER BY name COLLATE NOCASE"); u.next();)
+        for (QSqlQuery u = exec(d, "SELECT id FROM playlists WHERE sort_order IS NULL ORDER BY kind != 'cache', name COLLATE NOCASE"); u.next();)
             unordered << u.value(0).toLongLong();
         QSqlQuery mx = exec(d, "SELECT COALESCE(MAX(sort_order), 0) FROM playlists");
         int next = mx.next() ? mx.value(0).toInt() : 0;
@@ -293,6 +299,45 @@ void Database::setFile(qint64 id, const QString &path, const QString &codec, dou
          "UPDATE tracks SET file_path = ?, codec = ?, bitrate = ?, file_size = ?, state = 'ready', error = NULL, "
          "duration = COALESCE(?, duration) WHERE id = ?",
          {path, nullable(codec), nullable(bitrate), size, nullable(duration), id});
+}
+
+void Database::setFilePath(qint64 id, const QString &path)
+{
+    exec(db(), "UPDATE tracks SET file_path = ? WHERE id = ?", {path, id});
+}
+
+void Database::setPlaylistFolder(qint64 id, const QString &folder)
+{
+    // « Cache local » n'a pas de dossier propre : c'est la bibliothèque d'Orpheus.
+    exec(db(), "UPDATE playlists SET folder = ? WHERE id = ? AND kind != 'cache'", {nullable(folder), id});
+    ++m_layoutVersion;
+}
+
+QString Database::folderForTrack(qint64 trackId) const
+{
+    // Première playlist (ordre de la barre latérale) contenant le morceau et ayant un dossier.
+    QSqlQuery q = exec(db(),
+                       "SELECT p.folder FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id "
+                       "WHERE pt.track_id = ? AND p.kind != 'cache' AND p.folder IS NOT NULL AND p.folder != '' "
+                       "ORDER BY p.sort_order, p.name COLLATE NOCASE LIMIT 1",
+                       {trackId});
+    return q.next() ? q.value(0).toString() : QString();
+}
+
+QList<qint64> Database::tracksToPlace(const QString &libraryDir) const
+{
+    // Morceaux en local rangés hors de la bibliothèque, ou présents dans une playlist à dossier.
+    const QString prefix = QDir::cleanPath(libraryDir) + '/';
+    QSqlQuery q = exec(db(),
+                       "SELECT id FROM tracks WHERE state = 'ready' AND file_path IS NOT NULL AND ("
+                       " substr(file_path, 1, ?) != ? OR id IN (SELECT pt.track_id FROM playlist_tracks pt "
+                       " JOIN playlists p ON p.id = pt.playlist_id "
+                       " WHERE p.kind != 'cache' AND p.folder IS NOT NULL AND p.folder != ''))",
+                       {prefix.size(), prefix});
+    QList<qint64> out;
+    while (q.next())
+        out << q.value(0).toLongLong();
+    return out;
 }
 
 void Database::enrichMetadata(qint64 id, const QString &title, const QString &artist, const QString &album)
@@ -499,10 +544,10 @@ QList<Playlist> Database::playlists() const
     QSqlQuery q = exec(db(),
                        "SELECT p.id, p.name, p.kind, p.source_ref, p.created_at, COUNT(t.id), "
                        " COALESCE(SUM(t.state = 'ready'), 0), COALESCE(SUM(t.duration), 0), "
-                       " COALESCE(SUM(CASE WHEN t.state = 'ready' THEN t.file_size END), 0) "
+                       " COALESCE(SUM(CASE WHEN t.state = 'ready' THEN t.file_size END), 0), p.folder "
                        "FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id "
                        "LEFT JOIN tracks t ON t.id = pt.track_id "
-                       "GROUP BY p.id ORDER BY p.kind != 'cache', p.sort_order, p.name COLLATE NOCASE");
+                       "GROUP BY p.id ORDER BY p.sort_order, p.name COLLATE NOCASE");
     QList<Playlist> out;
     while (q.next()) {
         Playlist p;
@@ -515,6 +560,7 @@ QList<Playlist> Database::playlists() const
         p.readyCount = q.value(6).toInt();
         p.totalDuration = q.value(7).toDouble();
         p.diskSize = q.value(8).toLongLong();
+        p.folder = q.value(9).toString();
         out.append(p);
     }
     return out;
@@ -540,6 +586,7 @@ qint64 Database::createPlaylist(const QString &name, const QString &kind, const 
 
 void Database::setPlaylistOrder(const QList<qint64> &ids)
 {
+    ++m_layoutVersion;  // l'ordre décide du dossier d'un morceau présent dans plusieurs playlists
     QSqlDatabase d = db();
     d.transaction();
     for (int i = 0; i < ids.size(); ++i)
@@ -562,6 +609,7 @@ bool Database::deletePlaylist(qint64 id)
 {
     if (id == m_cachePlaylist)
         return false;
+    ++m_layoutVersion;
     exec(db(), "DELETE FROM playlists WHERE id = ?", {id});
     return true;
 }
@@ -579,6 +627,8 @@ QList<Track> Database::playlistTracks(qint64 id) const
 
 void Database::addToPlaylist(qint64 playlistId, qint64 trackId)
 {
+    if (playlistId != m_cachePlaylist)  // « Cache local » n'a pas de dossier propre
+        ++m_layoutVersion;
     exec(db(),
          "INSERT OR IGNORE INTO playlist_tracks(playlist_id, track_id, position, added_at) "
          "VALUES (?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM playlist_tracks WHERE playlist_id = ?), ?)",
@@ -602,6 +652,8 @@ QHash<qint64, bool> Database::playlistsContaining(qint64 trackId, const QString 
 void Database::removeFromPlaylist(qint64 playlistId, qint64 trackId)
 {
     exec(db(), "DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?", {playlistId, trackId});
+    if (playlistId != m_cachePlaylist)
+        ++m_layoutVersion;
 }
 
 void Database::moveInPlaylist(qint64 playlistId, qint64 trackId, int newIndex)

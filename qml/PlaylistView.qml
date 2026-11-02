@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 Item {
@@ -37,6 +38,44 @@ Item {
                 color: OTheme.muted
                 font.pixelSize: 14
             }
+            // Dossier des fichiers de la playlist (« Cache local » : toujours la bibliothèque).
+            RowLayout {
+                visible: !root.isCache
+                Layout.topMargin: 6
+                Layout.fillWidth: true
+                spacing: 8
+                Icon { iconName: "disk"; size: 14; color: OTheme.muted }
+                Text {
+                    readonly property string path: Qt.platform.os === "windows"
+                                                    ? (root.p.folder || "").replace(/\//g, "\\") : (root.p.folder || "")
+                    text: root.p.folder ? "Dossier : " + path : "Dossier : bibliothèque d'Orpheus (par défaut)"
+                    color: OTheme.muted
+                    font.pixelSize: 13
+                    elide: Text.ElideMiddle
+                    Layout.maximumWidth: 460
+                    ToolTip.visible: folderHover.hovered && root.p.folder
+                    ToolTip.text: path
+                    ToolTip.delay: 400
+                    HoverHandler { id: folderHover }
+                }
+                PillButton { text: "Choisir un dossier…"; implicitHeight: 28; onClicked: folderDialog.open() }
+                PillButton {
+                    text: "Ouvrir"; implicitHeight: 28
+                    onClicked: Qt.openUrlExternally(backend.folderUrl(root.p.folder || ""))
+                }
+                PillButton {
+                    text: "Par défaut"; implicitHeight: 28
+                    visible: !!root.p.folder
+                    onClicked: backend.setPlaylistFolder(root.p.id, "")
+                }
+            }
+        }
+
+        FolderDialog {
+            id: folderDialog
+            title: "Dossier des morceaux de « " + (root.p.name || "") + " »"
+            currentFolder: backend.folderUrl(root.p.folder || "")
+            onAccepted: backend.setPlaylistFolder(root.p.id, selectedFolder.toString())
         }
 
         Flow {
