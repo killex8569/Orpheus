@@ -17,6 +17,10 @@ if(UNIX AND NOT APPLE)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
 endif()
 find_package(PkgConfig REQUIRED)
+if(WIN32)
+    # MSYS2 : sans cela, pkg-config renvoie des chemins « /ucrt64/… » illisibles pour CMake.
+    set(PKG_CONFIG_ARGN --define-prefix)
+endif()
 pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 
 qt_standard_project_setup(REQUIRES 6.5)
