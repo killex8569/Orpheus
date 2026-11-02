@@ -26,6 +26,9 @@ add_library(orpheus_core STATIC
     src/Downloader.cpp
     src/Spotify.cpp
     src/Lyrics.cpp
+    src/LyricsService.cpp
+    src/Resolver.cpp
+    src/Importer.cpp
 )
 target_include_directories(orpheus_core PUBLIC src)
 target_link_libraries(orpheus_core PUBLIC Qt6::Core Qt6::Gui Qt6::Sql Qt6::Network)

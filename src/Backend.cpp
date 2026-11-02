@@ -5,10 +5,8 @@
 #include <QGuiApplication>
 #include <QLocale>
 #include <QRandomGenerator>
-#include <QUrlQuery>
 #include <QUrl>
 #include <algorithm>
-#include <memory>
 
 #include "Matcher.h"
 
@@ -17,6 +15,8 @@ Backend::Backend(const Paths &paths, QObject *parent)
       m_statsTracks(&m_paths)
 {
 }
+
+Backend::~Backend() = default;
 
 bool Backend::init(QString *error)
 {
@@ -27,7 +27,9 @@ bool Backend::init(QString *error)
     m_dl = new Downloader(&m_db, m_yt, m_paths, this);
     m_spotify = new Spotify(&m_db, this);
     m_player = new Player(&m_db, m_dl, m_yt, this);
-    m_lyrics = new LyricsClient(this);
+    m_resolver = std::make_unique<TrackResolver>(&m_db, m_yt);
+    m_importer = new Importer(&m_db, m_yt, m_spotify, m_dl, m_resolver.get(), this);
+    m_lyrics = new LyricsService(&m_db, this);
     m_searchSource = m_db.setting("search_source", "youtube");
 
     connect(m_player, &Player::stateChanged, this, &Backend::playerChanged);
@@ -37,7 +39,17 @@ bool Backend::init(QString *error)
         m_queue.setTracks(m_player->queue());
         emit trackChanged();
     });
-    connect(m_player, &Player::trackChanged, this, &Backend::loadLyricsForCurrent);
+    connect(m_player, &Player::trackChanged, this, [this] { m_lyrics->setCurrent(m_player->current(), m_player->duration()); });
+    connect(m_lyrics, &LyricsService::changed, this, &Backend::lyricsChanged);
+    connect(m_importer, &Importer::jobsChanged, this, &Backend::refreshJobs);
+    connect(m_importer, &Importer::progress, this, &Backend::scheduleRefresh);
+    connect(m_importer, &Importer::playlistsChanged, this, &Backend::refreshPlaylists);
+    connect(m_importer, &Importer::toast, this, &Backend::toast);
+    connect(m_importer, &Importer::finished, this, [this](qint64 playlistId) {
+        refreshPlaylists();
+        if (m_currentPlaylistId == playlistId)
+            openPlaylist(playlistId);
+    });
     connect(m_player, &Player::playCounted, this, [this] { loadStats(m_statsDays); });
     connect(m_player, &Player::errorOccurred, this, [this](const QString &m) { emit toast(m, true); });
     connect(m_dl, &Downloader::statusChanged, this, &Backend::downloadsChanged);
@@ -45,7 +57,7 @@ bool Backend::init(QString *error)
     connect(m_dl, &Downloader::finished, this, [this](qint64 id, bool ok, const QString &) {
         // Morceau gardé en local : ses paroles aussi, pour l'écoute hors ligne.
         if (ok)
-            enqueueLyrics(id);
+            m_lyrics->enqueue(id);
         if (const auto t = m_db.track(id)) {
             for (TrackModel *m : {&m_search, &m_local, &m_playlistTracks})
                 m->updateTrack(*t);
@@ -85,10 +97,7 @@ bool Backend::init(QString *error)
     // Les téléchargements en attente reprennent quelques secondes après le démarrage.
     QTimer::singleShot(3000, m_dl, &Downloader::resumePending);
     // Paroles des morceaux déjà en local, récupérées tranquillement en arrière-plan.
-    QTimer::singleShot(15000, this, [this] {
-        for (const Track &t : m_db.tracksNeedingLyrics(1000))
-            enqueueLyrics(t.id);
-    });
+    QTimer::singleShot(15000, m_lyrics, &LyricsService::enqueueMissing);
     loadStats(m_statsDays);
     return true;
 }
@@ -232,50 +241,6 @@ TrackModel *Backend::model(const QString &list)
     if (list == "stats")
         return &m_statsTracks;
     return nullptr;
-}
-
-// ---------- Résolution ----------
-
-void Backend::resolve(const Track &input, ResolveCb cb)
-{
-    if (input.id > 0) {
-        if (auto t = m_db.track(input.id)) {
-            cb(*t, {});
-            return;
-        }
-    }
-    if (!input.ytId.isEmpty()) {
-        cb(m_db.upsertTrack(input), {});
-        return;
-    }
-    if (input.title.isEmpty()) {
-        cb(std::nullopt, QStringLiteral("morceau sans titre"));
-        return;
-    }
-    // 1) Bibliothèque locale (id Spotify, clé artiste|titre, correspondances mémorisées).
-    if (auto local = m_db.findLocalMatch(input.spotifyId, input.artist, input.title)) {
-        Track merged = input;
-        merged.ytId = local->ytId;
-        cb(m_db.upsertTrack(merged), {});
-        return;
-    }
-    // 2) Recherche YouTube avec score de correspondance.
-    m_yt->findMatch(input.artist, input.title, input.duration, [this, input, cb](std::optional<Track> found, QString err) {
-        if (!err.isEmpty() || !found) {
-            cb(std::nullopt, err.isEmpty() ? QStringLiteral("aucune correspondance fiable sur YouTube pour « %1 — %2 »")
-                                                 .arg(input.artist, input.title)
-                                           : err);
-            return;
-        }
-        m_db.rememberMatch(input.artist, input.title, found->ytId);
-        Track merged = input;
-        merged.ytId = found->ytId;
-        if (merged.thumbnail.isEmpty())
-            merged.thumbnail = found->thumbnail;
-        if (merged.duration <= 0)
-            merged.duration = found->duration;
-        cb(m_db.upsertTrack(merged), {});
-    });
 }
 
 // ---------- Recherche et lecture ----------
@@ -569,244 +534,7 @@ void Backend::downloadPlaylist(qint64 id)
     openPlaylist(id);
 }
 
-void Backend::syncPlaylist(qint64 id)
-{
-    const auto p = m_db.playlist(id);
-    if (!p || p->sourceRef.isEmpty())
-        return;
-    if (p->sourceRef.startsWith("pasted:")) {
-        emit toast(QStringLiteral("Pour mettre à jour, collez de nouveau les morceaux avec le même nom (Importer)"), false);
-        return;
-    }
-    QString url;
-    if (p->kind == "spotify") {
-        const QString kind = p->sourceRef.section(':', 0, 0), ref = p->sourceRef.section(':', 1);
-        url = ref == "liked" ? QStringLiteral("spotify:liked") : QStringLiteral("https://open.spotify.com/%1/%2").arg(kind, ref);
-    } else if (p->sourceRef == "LM") {
-        url = QStringLiteral("https://music.youtube.com/playlist?list=LM");
-    } else {
-        url = "https://www.youtube.com/playlist?list=" + p->sourceRef;
-    }
-    importUrl(url);
-}
-
-// ---------- Imports ----------
-
-void Backend::importUrl(const QString &rawUrl)
-{
-    const QString url = rawUrl.trimmed();
-    QString source, kind, ref;
-    if (url == "spotify:liked") {
-        source = "spotify";
-        kind = "playlist";
-        ref = "liked";
-    } else if (const auto sp = parseSpotifyUrl(url); !sp.first.isEmpty()) {
-        source = "spotify";
-        kind = sp.first;
-        ref = sp.second;
-    } else if (url.contains("youtube.com") || url.contains("youtu.be")) {
-        const QUrlQuery q(QUrl(url).query());
-        ref = q.queryItemValue("list");
-        if (ref.isEmpty()) {
-            emit toast(QStringLiteral("Le lien YouTube ne contient pas de playlist (paramètre list=)"), true);
-            return;
-        }
-        source = "youtube";
-    } else {
-        emit toast(QStringLiteral("Lien non reconnu : collez un lien de playlist YouTube ou Spotify"), true);
-        return;
-    }
-    const qint64 job = m_db.createJob(source, url);
-    refreshJobs();
-    emit toast(QStringLiteral("Import lancé"), false);
-    runImport(job, source, kind, ref, url);
-}
-
-void Backend::importTrackLinks(const QString &text, const QString &rawName)
-{
-    const QStringList ids = spotifyTrackIds(text);
-    if (ids.isEmpty()) {
-        emit toast(QStringLiteral("Aucun lien de morceau Spotify trouvé dans le texte collé"), true);
-        return;
-    }
-    const QString name = rawName.trimmed().isEmpty() ? QStringLiteral("Playlist Spotify") : rawName.trimmed();
-    struct State {
-        ImportJob job;
-        QStringList ids;
-        QList<std::optional<Track>> results;
-        int next = 0, finished = 0, inflight = 0;
-    };
-    auto st = std::make_shared<State>();
-    st->ids = ids;
-    st->results.resize(ids.size());
-    st->job.id = m_db.createJob("spotify", name);
-    st->job.source = "spotify";
-    st->job.name = name;
-    st->job.total = int(ids.size());
-    st->job.status = "running";
-    st->job.message = QStringLiteral("Lecture des morceaux sur Spotify…");
-    m_db.updateJob(st->job);
-    refreshJobs();
-    emit toast(QStringLiteral("Import de %1 morceau(x) lancé").arg(ids.size()), false);
-
-    // Pages publiques des morceaux, quelques-unes à la fois, puis import normal.
-    auto pump = std::make_shared<std::function<void()>>();
-    *pump = [this, st, pump, name] {
-        if (st->finished == st->ids.size()) {
-            QList<Track> tracks;
-            for (const auto &r : std::as_const(st->results))
-                if (r)
-                    tracks.append(*r);
-            if (tracks.isEmpty()) {
-                st->job.status = "error";
-                st->job.message = QStringLiteral("aucun morceau lisible sur Spotify");
-                m_db.updateJob(st->job);
-                refreshJobs();
-                return;
-            }
-            // Même nom = même playlist : recoller la liste la met à jour sans doublon.
-            importTracks(st->job.id, "spotify", "pasted:" + name.toLower(), name, tracks);
-            return;
-        }
-        while (st->inflight < 4 && st->next < st->ids.size()) {
-            const int i = st->next++;
-            ++st->inflight;
-            m_spotify->publicTrack(st->ids[i], [this, st, pump, i](std::optional<Track> t, QString) {
-                st->results[i] = t;
-                --st->inflight;
-                ++st->finished;
-                if (st->finished % 10 == 0) {
-                    st->job.message = QStringLiteral("Lecture des morceaux sur Spotify : %1/%2").arg(st->finished).arg(st->ids.size());
-                    m_db.updateJob(st->job);
-                    scheduleRefresh();
-                }
-                (*pump)();
-            });
-        }
-    };
-    (*pump)();
-}
-
-void Backend::runImport(qint64 jobId, const QString &source, const QString &kind, const QString &ref, const QString &url)
-{
-    auto fail = [this, jobId](const QString &err) {
-        ImportJob j;
-        j.id = jobId;
-        for (const ImportJob &e : m_db.jobs())
-            if (e.id == jobId)
-                j = e;
-        j.status = "error";
-        j.message = err;
-        m_db.updateJob(j);
-        refreshJobs();
-    };
-    if (source == "youtube") {
-        m_yt->playlist(url, [this, jobId, ref, fail](QString name, QList<Track> tracks, QString err) {
-            if (!err.isEmpty())
-                fail(err);
-            else
-                importTracks(jobId, "youtube", ref, name, tracks);
-        });
-        return;
-    }
-    auto got = [this, jobId, kind, ref, fail](QString name, QList<Track> tracks, QString err) {
-        if (!err.isEmpty())
-            fail(err);
-        else
-            importTracks(jobId, "spotify", kind + ":" + ref, name, tracks);
-    };
-    if (m_spotify->isConnected()) {
-        m_spotify->tracks(kind, ref, [this, kind, ref, got](QString name, QList<Track> tracks, QString err) {
-            // Playlist d'un tiers inaccessible via l'API : page publique en repli.
-            if (!err.isEmpty() && ref != "liked")
-                m_spotify->publicTracks(kind, ref, got);
-            else
-                got(name, tracks, err);
-        });
-    } else if (ref == "liked") {
-        fail(QStringLiteral("connectez votre compte Spotify pour importer les titres likés"));
-    } else {
-        m_spotify->publicTracks(kind, ref, got);
-    }
-}
-
-void Backend::importTracks(qint64 jobId, const QString &kind, const QString &ref, const QString &name, const QList<Track> &tracks)
-{
-    // Ré-importer la même source met à jour sa playlist (synchronisation sans doublons).
-    qint64 playlistId = m_db.playlistBySource(kind, ref).value_or(0);
-    if (playlistId)
-        m_db.renamePlaylist(playlistId, name);
-    else
-        playlistId = m_db.createPlaylist(name, kind, ref);
-    refreshPlaylists();
-
-    struct State {
-        ImportJob job;
-        QList<Track> inputs;
-        QList<std::optional<Track>> results;
-        QList<bool> resolved;
-        int next = 0, added = 0, inflight = 0;
-        QStringList missing;
-    };
-    auto st = std::make_shared<State>();
-    st->job.id = jobId;
-    st->job.source = kind;
-    st->job.name = name;
-    st->job.playlistId = playlistId;
-    st->job.total = int(tracks.size());
-    st->job.status = "running";
-    st->inputs = tracks;
-    st->results.resize(tracks.size());
-    st->resolved.fill(false, tracks.size());
-    m_db.updateJob(st->job);
-    refreshJobs();
-
-    const bool download = m_db.settingBool("import_download", true);
-    const qint64 cache = m_db.cachePlaylistId();
-    // Résolution en parallèle (3 à la fois), ajout dans l'ordre d'origine.
-    auto pump = std::make_shared<std::function<void()>>();
-    *pump = [this, st, pump, playlistId, cache, download] {
-        while (st->added < st->inputs.size() && st->resolved[st->added]) {
-            const auto &r = st->results[st->added];
-            if (r) {
-                m_db.addToPlaylist(playlistId, r->id);
-                m_db.addToPlaylist(cache, r->id);
-                if (download)
-                    m_dl->enqueue(r->id);
-                ++st->job.done;
-            } else {
-                ++st->job.failed;
-                if (st->missing.size() < 50)
-                    st->missing << st->inputs[st->added].artist + " — " + st->inputs[st->added].title;
-            }
-            ++st->added;
-        }
-        if (st->added == st->inputs.size()) {
-            st->job.status = "done";
-            st->job.message = st->missing.isEmpty() ? QString() : "Introuvables : " + st->missing.join(" · ");
-            m_db.updateJob(st->job);
-            refreshJobs();
-            refreshPlaylists();
-            if (m_currentPlaylistId == playlistId)
-                openPlaylist(playlistId);
-            emit toast(QStringLiteral("Import terminé : %1 morceaux").arg(st->job.done), false);
-            return;
-        }
-        m_db.updateJob(st->job);
-        scheduleRefresh();
-        while (st->inflight < 3 && st->next < st->inputs.size()) {
-            const int i = st->next++;
-            ++st->inflight;
-            resolve(st->inputs[i], [st, pump, i](std::optional<Track> t, QString) {
-                st->results[i] = t;
-                st->resolved[i] = true;
-                --st->inflight;
-                (*pump)();
-            });
-        }
-    };
-    (*pump)();
-}
+// ---------- Comptes ----------
 
 void Backend::loadRemote(const QString &kind)
 {
@@ -889,129 +617,8 @@ void Backend::copyText(const QString &text)
 
 int Backend::lyricsIndex() const
 {
-    if (m_lyricsStatus != QLatin1String("synced"))
-        return -1;
     // Légère avance : la position n'est relue que 4 fois par seconde.
-    return lyricIndexAt(m_lyricsParsed, m_player->position() + 0.25);
-}
-
-void Backend::loadLyricsForCurrent()
-{
-    const auto t = m_player->current();
-    const qint64 id = t ? t->id : 0;
-    if (id == m_lyricsTrackId)
-        return;
-    m_lyricsTrackId = id;
-    m_lyricsParsed.clear();
-    m_lyricsLines.clear();
-    m_lyricsPlain.clear();
-    m_lyricsStatus.clear();
-    if (!t) {
-        emit lyricsChanged();
-        return;
-    }
-    // Déjà en base : disponible immédiatement, même hors ligne.
-    if (const auto stored = m_db.lyrics(id); stored && (stored->status == "found" || nowSecs() - stored->fetchedAt < 7 * 86400)) {
-        applyLyrics(*stored);
-        return;
-    }
-    m_lyricsStatus = QStringLiteral("loading");
-    emit lyricsChanged();
-    Track query = *t;
-    if (query.duration <= 0)
-        query.duration = m_player->duration();
-    fetchLyrics(query, [this, id](bool reached) {
-        if (id != m_lyricsTrackId)
-            return;  // l'utilisateur est passé à un autre morceau
-        if (const auto stored = m_db.lyrics(id); reached && stored) {
-            applyLyrics(*stored);
-        } else {
-            m_lyricsStatus = QStringLiteral("offline");
-            emit lyricsChanged();
-            enqueueLyrics(id);  // nouvel essai automatique en arrière-plan
-        }
-    });
-}
-
-void Backend::applyLyrics(const StoredLyrics &l)
-{
-    m_lyricsParsed.clear();
-    m_lyricsLines.clear();
-    m_lyricsPlain.clear();
-    if (l.status != "found") {
-        m_lyricsStatus = QStringLiteral("missing");
-    } else if (l.instrumental) {
-        m_lyricsStatus = QStringLiteral("instrumental");
-    } else if (!l.synced.isEmpty() && !(m_lyricsParsed = parseLrc(l.synced)).isEmpty()) {
-        m_lyricsStatus = QStringLiteral("synced");
-        for (const LyricLine &line : std::as_const(m_lyricsParsed))
-            m_lyricsLines.append(QVariantMap{{"time", line.time}, {"text", line.text}});
-    } else if (!l.plain.trimmed().isEmpty()) {
-        m_lyricsStatus = QStringLiteral("plain");
-        m_lyricsPlain = l.plain.trimmed();
-    } else {
-        m_lyricsStatus = QStringLiteral("missing");
-    }
-    emit lyricsChanged();
-}
-
-void Backend::fetchLyrics(const Track &t, std::function<void(bool)> cb)
-{
-    m_lyrics->fetch(t.artist, t.title, t.duration, [this, id = t.id, cb](LyricsClient::Result r) {
-        // Hors ligne : rien n'est enregistré, on réessaiera plus tard.
-        if (r.reached) {
-            StoredLyrics l;
-            l.status = r.found ? QStringLiteral("found") : QStringLiteral("missing");
-            l.synced = r.synced;
-            l.plain = r.plain;
-            l.instrumental = r.instrumental;
-            m_db.saveLyrics(id, l);
-        }
-        cb(r.reached);
-    });
-}
-
-void Backend::enqueueLyrics(qint64 trackId)
-{
-    if (trackId <= 0 || m_lyricsQueue.contains(trackId))
-        return;
-    if (const auto stored = m_db.lyrics(trackId); stored && (stored->status == "found" || nowSecs() - stored->fetchedAt < 7 * 86400))
-        return;
-    m_lyricsQueue.append(trackId);
-    pumpLyrics();
-}
-
-void Backend::pumpLyrics()
-{
-    if (m_lyricsBusy || m_lyricsQueue.isEmpty())
-        return;
-    const auto t = m_db.track(m_lyricsQueue.takeFirst());
-    if (!t) {
-        pumpLyrics();
-        return;
-    }
-    m_lyricsBusy = true;
-    fetchLyrics(*t, [this, id = t->id](bool reached) {
-        m_lyricsBusy = false;
-        if (!reached) {
-            // Réessayé plus tard (3 fois au plus par session), sans bloquer les suivants.
-            if (++m_lyricsFailures[id] < 3)
-                m_lyricsQueue.append(id);
-            // Plusieurs échecs d'affilée : pas de réseau, pause de 5 minutes.
-            const int wait = ++m_lyricsFailStreak >= 3 ? 5 * 60 * 1000 : 5000;
-            if (wait > 5000)
-                m_lyricsFailStreak = 0;
-            QTimer::singleShot(wait, this, &Backend::pumpLyrics);
-            return;
-        }
-        m_lyricsFailStreak = 0;
-        // Le morceau en cours attendait peut-être ces paroles.
-        if (id == m_lyricsTrackId && m_lyricsStatus != "synced" && m_lyricsStatus != "plain")
-            if (const auto stored = m_db.lyrics(id))
-                applyLyrics(*stored);
-        // Espacé, par politesse envers LRCLIB (service gratuit).
-        QTimer::singleShot(1500, this, &Backend::pumpLyrics);
-    });
+    return m_lyrics->indexAt(m_player->position() + 0.25);
 }
 
 // ---------- Statistiques ----------

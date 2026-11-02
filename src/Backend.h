@@ -3,17 +3,22 @@
 #include <QObject>
 #include <QTimer>
 #include <QVariantList>
+#include <memory>
 
 #include "Database.h"
 #include "Downloader.h"
-#include "Lyrics.h"
+#include "Importer.h"
+#include "LyricsService.h"
 #include "Paths.h"
 #include "Player.h"
+#include "Resolver.h"
 #include "Spotify.h"
 #include "TrackModel.h"
 #include "YtDlp.h"
 
-// Pont entre la logique de l'application et l'interface QML.
+// Pont entre la logique de l'application et l'interface QML. Les imports
+// (Importer), les paroles (LyricsService) et la résolution des morceaux
+// (TrackResolver) vivent dans leurs propres classes.
 class Backend : public QObject {
     Q_OBJECT
     // Listes
@@ -77,6 +82,7 @@ class Backend : public QObject {
 
 public:
     explicit Backend(const Paths &paths, QObject *parent = nullptr);
+    ~Backend() override;
     bool init(QString *error);
 
     TrackModel *searchResults() { return &m_search; }
@@ -124,9 +130,9 @@ public:
     bool remoteLoading() const { return m_remoteLoading; }
     QString targetPlaylistName() const;
     qint64 playingPlaylistId() const { return m_playingPlaylistId; }
-    QVariantList lyricsLines() const { return m_lyricsLines; }
-    QString lyricsPlain() const { return m_lyricsPlain; }
-    QString lyricsStatus() const { return m_lyricsStatus; }
+    QVariantList lyricsLines() const { return m_lyrics->lines(); }
+    QString lyricsPlain() const { return m_lyrics->plain(); }
+    QString lyricsStatus() const { return m_lyrics->status(); }
     int lyricsIndex() const;
     TrackModel *statsTracks() { return &m_statsTracks; }
     QVariantMap stats() const { return m_stats; }
@@ -160,12 +166,12 @@ public:
     Q_INVOKABLE void renamePlaylist(qint64 id, const QString &name);
     Q_INVOKABLE void deletePlaylist(qint64 id);
     Q_INVOKABLE void downloadPlaylist(qint64 id);
-    Q_INVOKABLE void syncPlaylist(qint64 id);
+    Q_INVOKABLE void syncPlaylist(qint64 id) { m_importer->syncPlaylist(id); }
 
     // Imports et comptes
-    Q_INVOKABLE void importUrl(const QString &url);
+    Q_INVOKABLE void importUrl(const QString &url) { m_importer->importUrl(url); }
     // Liens de morceaux Spotify collés (Ctrl+A, Ctrl+C dans une playlist, même privée).
-    Q_INVOKABLE void importTrackLinks(const QString &text, const QString &name);
+    Q_INVOKABLE void importTrackLinks(const QString &text, const QString &name) { m_importer->importTrackLinks(text, name); }
     Q_INVOKABLE void loadRemote(const QString &kind);
     Q_INVOKABLE void clearJobs();
     Q_INVOKABLE void spotifyLogin();
@@ -197,23 +203,13 @@ signals:
     void toast(const QString &message, bool error);
 
 private:
-    using ResolveCb = std::function<void(std::optional<Track>, QString)>;
-    // Transforme une description de morceau en morceau local : bibliothèque d'abord,
-    // puis recherche YouTube avec score de correspondance.
-    void resolve(const Track &input, ResolveCb cb);
+    void resolve(const Track &input, TrackResolver::Callback cb) { m_resolver->resolve(input, std::move(cb)); }
     TrackModel *model(const QString &list);
     void refreshPlaylists();
     void refreshJobs();
     void scheduleRefresh();
     void setTargetPlaylist(qint64 id);
-    void loadLyricsForCurrent();
-    void applyLyrics(const StoredLyrics &l);
-    void fetchLyrics(const Track &t, std::function<void(bool reached)> cb);
-    void enqueueLyrics(qint64 trackId);
-    void pumpLyrics();
     void updateMarks();
-    void runImport(qint64 jobId, const QString &source, const QString &kind, const QString &ref, const QString &url);
-    void importTracks(qint64 jobId, const QString &kind, const QString &ref, const QString &name, const QList<Track> &tracks);
 
     Paths m_paths;
     Database m_db;
@@ -221,6 +217,9 @@ private:
     Downloader *m_dl;
     Spotify *m_spotify;
     Player *m_player;
+    std::unique_ptr<TrackResolver> m_resolver;
+    Importer *m_importer;
+    LyricsService *m_lyrics;
     TrackModel m_search, m_local, m_playlistTracks, m_queue, m_statsTracks;
     QVariantList m_playlists, m_jobs, m_remoteYoutube, m_remoteSpotify;
     QVariantMap m_currentPlaylist;
@@ -234,16 +233,6 @@ private:
     QString m_remoteError;
     bool m_remoteLoading = false;
     QString m_ytdlpVersion;
-    // Paroles
-    LyricsClient *m_lyrics = nullptr;
-    qint64 m_lyricsTrackId = -1;
-    QList<LyricLine> m_lyricsParsed;
-    QVariantList m_lyricsLines;
-    QString m_lyricsPlain, m_lyricsStatus;
-    QList<qint64> m_lyricsQueue;  // récupération en arrière-plan pour l'écoute hors ligne
-    bool m_lyricsBusy = false;
-    QHash<qint64, int> m_lyricsFailures;  // échecs par morceau (cette session)
-    int m_lyricsFailStreak = 0;           // échecs d'affilée : sans doute hors ligne
     // Statistiques
     int m_statsDays = 30;
     QVariantMap m_stats;

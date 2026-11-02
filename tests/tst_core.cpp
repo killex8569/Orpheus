@@ -1,7 +1,10 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <QTimer>
+
 #include "Database.h"
+#include "Importer.h"
 #include "Lyrics.h"
 #include "Matcher.h"
 #include "Spotify.h"
@@ -134,6 +137,38 @@ private slots:
         db.saveLyrics(a.id, l);
         QCOMPARE(db.lyrics(a.id)->synced, QString("[00:01.00]x"));
         QVERIFY(db.tracksNeedingLyrics(10).isEmpty());
+    }
+
+    void parallelPool()
+    {
+        // Rien à faire : fin immédiate.
+        bool all = false;
+        runParallel(0, 3, [](int, std::function<void()>) { QFAIL("aucune tâche attendue"); }, [&] { all = true; });
+        QVERIFY(all);
+
+        // Tâches terminées immédiatement (morceaux déjà en local) : pas de récursion, tout est traité.
+        int doneCount = 0, allCount = 0;
+        runParallel(20000, 3, [&](int, std::function<void()> done) { ++doneCount; done(); }, [&] { ++allCount; });
+        QCOMPARE(doneCount, 20000);
+        QCOMPARE(allCount, 1);
+
+        // Tâches asynchrones : jamais plus de `width` en même temps, toutes terminées une fois.
+        int inflight = 0, peak = 0, finished = 0;
+        allCount = 0;
+        runParallel(
+            10, 3,
+            [&](int i, std::function<void()> done) {
+                peak = qMax(peak, ++inflight);
+                QTimer::singleShot(5 + (i % 3) * 5, [&, done] {
+                    --inflight;
+                    ++finished;
+                    done();
+                });
+            },
+            [&] { ++allCount; });
+        QVERIFY(QTest::qWaitFor([&] { return allCount == 1; }, 2000));
+        QCOMPARE(finished, 10);
+        QCOMPARE(peak, 3);
     }
 
     void pastedSpotifyLinks()
