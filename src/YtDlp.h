@@ -31,7 +31,11 @@ public:
     QString binary() const { return m_bin; }
     bool hasDeno() const { return !m_deno.isEmpty(); }
     bool isManaged() const;
-    void setCookiesBrowser(const QString &b) { m_cookiesBrowser = b; }
+    void setCookiesBrowser(const QString &b)
+    {
+        m_cookiesBrowser = b;
+        m_cookiesBroken = false;
+    }
     // Recense les copies de yt-dlp installées (copie gérée, PATH, dossiers usuels).
     void redetect();
     // Interroge chaque copie et retient la plus récente : une version de quelques
@@ -51,8 +55,15 @@ public:
     // Installe/met à jour une copie de yt-dlp gérée par Orpheus (toujours récente).
     void updateManaged(std::function<void(QString message, bool ok)> cb);
 
+signals:
+    // Les cookies du navigateur choisi sont illisibles (navigateur ouvert, chiffrement
+    // Windows…) : Orpheus continue sans eux jusqu'au prochain changement de réglage.
+    void cookiesUnavailable(const QString &browser);
+
 private:
     QStringList baseArgs() const;
+    // Désactive les cookies si l'erreur vient de leur lecture ; true si c'est le cas.
+    bool dropBrokenCookies(const QString &stderrText);
     void runJson(const QStringList &args, int timeoutMs, std::function<void(QJsonDocument, QString)> cb);
     void searchRaw(const QString &query, int limit, std::function<void(QList<Track>, QList<Matcher::Candidate>, QString)> cb);
 
@@ -61,6 +72,7 @@ private:
     QStringList m_candidates;
     QString m_deno;
     QString m_cookiesBrowser;
+    bool m_cookiesBroken = false;
 };
 
 QString ytdlpError(const QString &stderrText);

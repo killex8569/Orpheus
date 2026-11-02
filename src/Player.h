@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QDateTime>
 #include <QObject>
+#include <QSet>
 #include <QTimer>
 
 #include "Database.h"
@@ -14,6 +16,9 @@ struct mpv_handle;
 //  1. fichier local présent → lecture immédiate ;
 //  2. sinon téléchargement prioritaire (un seul transfert, ~2-4 s) puis lecture locale ;
 //  3. si le téléchargement échoue ou traîne, bascule automatique en streaming.
+// Morceau suivant : téléchargé d'avance (playlist, file), sauf les résultats de recherche
+// qui suivent le morceau choisi : seul leur flux est préparé, rien n'est enregistré tant
+// qu'ils ne sont pas réellement écoutés.
 class Player : public QObject {
     Q_OBJECT
 public:
@@ -40,7 +45,9 @@ public:
     bool isReady() const { return !m_source.isEmpty() && !m_loading; }
 
     // Commandes
-    void playList(const QList<Track> &tracks, int start, bool shuffle);
+    // browseRest : file issue d'une recherche, les morceaux autres que celui choisi ne
+    // sont pas téléchargés d'avance.
+    void playList(const QList<Track> &tracks, int start, bool shuffle, bool browseRest = false);
     void jump(int index);
     void next();
     void prev();
@@ -86,6 +93,7 @@ private:
     void onPlaybackError(const QString &msg);
     void advance(bool naturalEnd);
     void prefetchNext();
+    void preResolve(const Track &t);
     void setStatus(const QString &s);
     void bumpQueue();
     void trackListening();
@@ -126,4 +134,12 @@ private:
     double m_lastPos = -1;
     qint64 m_playRow = 0;       // ligne de l'historique, une fois l'écoute comptée
     double m_savedListened = 0;
+    // Résultats de recherche dans la file : flux préparé au lieu d'un téléchargement.
+    QSet<qint64> m_browseOnly;
+    struct PreStream {
+        qint64 trackId = 0;
+        QString url, userAgent;
+        QDateTime at;
+    } m_pre;
+    qint64 m_preResolving = 0;
 };

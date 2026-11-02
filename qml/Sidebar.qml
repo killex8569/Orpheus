@@ -56,6 +56,54 @@ Rectangle {
         }
     }
 
+    // En-tête de section repliable (clic sur le titre), état mémorisé dans les réglages.
+    component SectionHeader: Item {
+        id: sh
+        property string label
+        property string settingKey
+        property bool collapsed: backend.settingBool(settingKey, false)
+        default property alias extra: extraRow.data
+        Layout.fillWidth: true
+        Layout.leftMargin: 6
+        Layout.bottomMargin: 2
+        implicitHeight: 28
+
+        function toggle() {
+            collapsed = !collapsed
+            backend.setSetting(settingKey, collapsed ? "true" : "false")
+        }
+
+        RowLayout {
+            anchors.fill: parent
+            spacing: 4
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                HoverHandler { id: shHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: sh.toggle() }
+                RowLayout {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+                    Icon {
+                        iconName: "chevron-down"
+                        size: 12
+                        rotation: sh.collapsed ? -90 : 0
+                        color: shHover.hovered ? OTheme.text : OTheme.muted
+                        Behavior on rotation { NumberAnimation { duration: 120 } }
+                    }
+                    Text {
+                        text: sh.label
+                        color: shHover.hovered ? OTheme.text : OTheme.muted
+                        font.pixelSize: 11
+                        font.letterSpacing: 1
+                        font.weight: Font.DemiBold
+                    }
+                }
+            }
+            Row { id: extraRow }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 12
@@ -71,52 +119,141 @@ Rectangle {
             Text { text: "Orpheus"; color: OTheme.text; font.pixelSize: 20; font.weight: Font.DemiBold }
         }
 
-        NavItem { iconName: "search"; label: "Rechercher"; active: root.view === "search"; onClicked: root.navigate("search", 0) }
-        NavItem { iconName: "queue"; label: "File d'attente"; active: root.view === "queue"; onClicked: root.navigate("queue", 0) }
-        NavItem { iconName: "lyrics"; label: "Paroles"; active: root.view === "lyrics"; onClicked: root.navigate("lyrics", 0) }
+        // ---------- Section « Musique » (repliable) ----------
+        SectionHeader {
+            id: musicHeader
+            label: "MUSIQUE"
+            settingKey: "sidebar_music_collapsed"
+        }
+        // Repliée, une section garde visibles l'élément ouvert et ceux qui signalent
+        // quelque chose (Jam en cours, mise à jour disponible), comme sur Discord.
+        NavItem { iconName: "search"; label: "Rechercher"; active: root.view === "search"
+                  visible: !musicHeader.collapsed || active; onClicked: root.navigate("search", 0) }
+        NavItem { iconName: "queue"; label: "File d'attente"; active: root.view === "queue"
+                  visible: !musicHeader.collapsed || active; onClicked: root.navigate("queue", 0) }
+        NavItem { iconName: "lyrics"; label: "Paroles"; active: root.view === "lyrics"
+                  visible: !musicHeader.collapsed || active; onClicked: root.navigate("lyrics", 0) }
         NavItem {
             iconName: "jam"; label: "Jam"; active: root.view === "jam"
             count: backend.jam.active ? backend.jam.members.length : -1
+            visible: !musicHeader.collapsed || active || backend.jam.active
             onClicked: root.navigate("jam", 0)
         }
-        NavItem { iconName: "stats"; label: "Statistiques"; active: root.view === "stats"; onClicked: root.navigate("stats", 0) }
-        NavItem { iconName: "download"; label: "Importer"; active: root.view === "import"; onClicked: root.navigate("import", 0) }
-        NavItem { iconName: "settings"; label: "Paramètres"; active: root.view === "settings"; onClicked: root.navigate("settings", 0) }
+        NavItem { iconName: "stats"; label: "Statistiques"; active: root.view === "stats"
+                  visible: !musicHeader.collapsed || active; onClicked: root.navigate("stats", 0) }
+        NavItem { iconName: "download"; label: "Importer"; active: root.view === "import"
+                  visible: !musicHeader.collapsed || active; onClicked: root.navigate("import", 0) }
+        NavItem { iconName: "settings"; label: "Paramètres"; active: root.view === "settings"
+                  visible: !musicHeader.collapsed || active; onClicked: root.navigate("settings", 0) }
         NavItem {
             iconName: "update"; label: "Mises à jour"; active: root.view === "updates"
             dot: backend.updates.updateAvailable
+            visible: !musicHeader.collapsed || active || dot
             onClicked: root.navigate("updates", 0)
         }
 
-        RowLayout {
-            Layout.topMargin: 20
-            Layout.leftMargin: 12
-            Text {
-                text: "PLAYLISTS"
-                color: OTheme.muted
-                font.pixelSize: 11
-                font.letterSpacing: 1
-                Layout.fillWidth: true
-            }
+        // ---------- Section « Playlists » (repliable, réordonnable) ----------
+        SectionHeader {
+            id: playlistsHeader
+            Layout.topMargin: 14
+            label: "PLAYLISTS"
+            settingKey: "sidebar_playlists_collapsed"
             IconButton { iconName: "plus"; iconSize: 15; tip: "Nouvelle playlist"; onClicked: root.newPlaylist() }
         }
 
         ListView {
+            id: plList
+            // Glisser-déposer : position de départ et point d'insertion (avant l'élément « dropAt »).
+            property int dragFrom: -1
+            property int dropAt: -1
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
             spacing: 2
             model: backend.playlists
             boundsBehavior: Flickable.StopAtBounds
+            interactive: dragFrom < 0
             ScrollBar.vertical: ScrollBar {}
             WheelScroll {}
-            delegate: NavItem {
+
+            // Point d'insertion sous le pointeur ; « Cache local » reste toujours en tête.
+            function updateDrop(scenePos) {
+                const p = mapFromItem(null, scenePos.x, scenePos.y)
+                const y = p.y + contentY
+                let idx = indexAt(10, y)
+                if (idx < 0) {
+                    idx = p.y < 0 ? 1 : count
+                } else {
+                    const it = itemAtIndex(idx)
+                    if (it && y > it.y + it.height / 2)
+                        idx += 1
+                }
+                dropAt = Math.max(1, idx)
+            }
+
+            delegate: Item {
+                id: slot
                 required property var modelData
-                iconName: ({ "cache": "disk", "youtube": "youtube", "spotify": "spotify" })[modelData.kind] || "music"
-                label: modelData.name
-                count: modelData.trackCount
-                active: root.view === "playlist" && root.playlistId === modelData.id
-                onClicked: root.navigate("playlist", modelData.id)
+                required property int index
+                readonly property bool active: root.view === "playlist" && root.playlistId === modelData.id
+                readonly property bool shown: !playlistsHeader.collapsed || active
+                readonly property bool movable: modelData.kind !== "cache"
+                width: ListView.view.width
+                height: shown ? 38 : 0
+                visible: shown
+                opacity: plList.dragFrom === index ? 0.45 : 1
+
+                NavItem {
+                    anchors.fill: parent
+                    iconName: ({ "cache": "disk", "youtube": "youtube", "spotify": "spotify" })[slot.modelData.kind] || "music"
+                    label: slot.modelData.name
+                    count: slot.modelData.trackCount
+                    active: slot.active
+                    onClicked: root.navigate("playlist", slot.modelData.id)
+                }
+
+                // Repère d'insertion pendant un glisser-déposer.
+                Rectangle {
+                    readonly property bool before: plList.dropAt === slot.index
+                    readonly property bool after: plList.dropAt === plList.count && slot.index === plList.count - 1
+                    visible: plList.dragFrom >= 0 && (before || after)
+                             && plList.dropAt !== plList.dragFrom && plList.dropAt !== plList.dragFrom + 1
+                    x: 8; width: parent.width - 16; height: 2; radius: 1
+                    y: before ? -2 : parent.height
+                    color: OTheme.accent
+                }
+
+                DragHandler {
+                    enabled: slot.movable && !playlistsHeader.collapsed
+                    target: null
+                    xAxis.enabled: false
+                    onActiveChanged: {
+                        if (active) {
+                            plList.dragFrom = slot.index
+                            plList.updateDrop(centroid.scenePosition)
+                            return
+                        }
+                        const from = plList.dragFrom, at = plList.dropAt
+                        plList.dragFrom = -1
+                        plList.dropAt = -1
+                        if (at >= 1 && at !== from && at !== from + 1)
+                            backend.movePlaylist(slot.modelData.id, at > from ? at - 1 : at)
+                    }
+                    onCentroidChanged: if (active) plList.updateDrop(centroid.scenePosition)
+                }
+
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    enabled: slot.movable
+                    onTapped: plMenu.popup()
+                }
+                Menu {
+                    id: plMenu
+                    MenuItem { text: "Monter"; enabled: slot.index > 1
+                               onTriggered: backend.movePlaylist(slot.modelData.id, slot.index - 1) }
+                    MenuItem { text: "Descendre"; enabled: slot.index < plList.count - 1
+                               onTriggered: backend.movePlaylist(slot.modelData.id, slot.index + 1) }
+                }
             }
         }
 

@@ -32,11 +32,13 @@ The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Set
 
 - **Search** on YouTube (default) or Spotify (selectable in the settings, or with the toggle next to the search bar). A pasted YouTube link plays directly. Tracks already on disk appear first ("Déjà en local").
 - **Local cache** ("Cache local" playlist): every track you play is downloaded **once**, then played from disk. Before any search, Orpheus checks whether the track is already known: by YouTube id, by Spotify id, by an "artist|title" key, or through previously stored matches.
-- **Personal playlists**: create, rename, reorder (right-click → Monter/Descendre), delete. Their tracks are never removed from the cache.
+- **Personal playlists**: create, rename, reorder their tracks (right-click → Monter/Descendre), delete. Their tracks are never removed from the cache.
+- **Sidebar**: the "Musique" and "Playlists" sections fold like Discord categories (click the title); a folded section still shows the open item and anything that needs attention (Jam in progress, update available). The state is remembered. Playlists can be reordered by drag and drop, or right-click → Monter/Descendre ("Cache local" stays first).
   To avoid duplicates, search results already in the playlist you are filling (the last one opened or added to) are greyed out, including other versions of the same title. In "Ajouter à une playlist", playlists that already contain the track are disabled.
 - **Shuffle**: the "Aléatoire" button in a playlist is a toggle. When it is on, the **whole** playlist is shuffled. When it is off, the original order comes back and playback continues from the current track.
 - **Imports**:
   - YouTube / YouTube Music playlist from a link, or from your account (cookies of the selected browser);
+    if the browser's cookies can't be read (browser open, or Chromium-based browsers on Windows, which encrypt them), Orpheus says so once and carries on without them. On Windows, use Firefox;
   - Spotify playlist or album: public ones without an account (≈100 tracks); private ones and liked songs with an account (OAuth, no secret).
   - Private Spotify playlist **without an account**: in the Spotify desktop app, select every track (`Ctrl+A`), copy (`Ctrl+C`), and paste into "Playlist Spotify privée : coller les morceaux". Track pages stay public even when the playlist is private. Pasting again under the same name updates the playlist.
     Each track is matched on YouTube with a score (title, artist, duration; live, cover, remix and similar versions are rejected).
@@ -54,6 +56,7 @@ The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Set
    Each track takes ~8-10 s, mostly spent waiting on YouTube: ~1 s for yt-dlp startup, ~3 s for extraction and JavaScript solving, then a few seconds of mandatory delay before the stream.
 3. If the download fails or takes longer than 12 s, playback switches automatically to streaming. The cache will be retried later.
 4. The next track in the queue is downloaded during playback, so the transition is instant.
+   Exception: when you play a search result, the following results only get their stream prepared. Nothing is saved until you actually listen to them.
 
 Other safeguards: queue resumes after a restart, automatic retries (10 s, then 40 s), a corrupted file is deleted and replaced by streaming, cache size limit (least recently played tracks go first, never the ones in your playlists), single instance.
 

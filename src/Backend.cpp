@@ -24,6 +24,17 @@ bool Backend::init(QString *error)
         return false;
     m_yt = new YtDlp(m_paths.bin, this);
     m_yt->setCookiesBrowser(m_db.setting("yt_cookies_browser"));
+    connect(m_yt, &YtDlp::cookiesUnavailable, this, [this](const QString &browser) {
+        QString msg = QStringLiteral("Cookies de %1 illisibles : Orpheus continue sans eux.").arg(browser);
+#ifdef Q_OS_WIN
+        // Chrome/Edge/Brave verrouillent et chiffrent leurs cookies sous Windows.
+        if (browser != QLatin1String("firefox"))
+            msg += QStringLiteral(" Sous Windows, seul Firefox fonctionne (Paramètres → YouTube).");
+#else
+        msg += QStringLiteral(" Fermez le navigateur ou choisissez-en un autre dans les paramètres.");
+#endif
+        emit toast(msg, true);
+    });
     m_dl = new Downloader(&m_db, m_yt, m_paths, this);
     m_spotify = new Spotify(&m_db, this);
     m_player = new Player(&m_db, m_dl, m_yt, this);
@@ -364,7 +375,8 @@ void Backend::play(const QString &list, int row)
             m_local.updateTrack(r);
         }
         m_playingPlaylistId = 0;
-        m_player->playList(list, 0, m_player->shuffle());
+        // Les résultats suivants ne sont pas téléchargés d'avance : seul leur flux est préparé.
+        m_player->playList(list, 0, m_player->shuffle(), true);
     });
 }
 
@@ -619,6 +631,22 @@ void Backend::renamePlaylist(qint64 id, const QString &name)
     if (name.trimmed().isEmpty())
         return;
     m_db.renamePlaylist(id, name.trimmed());
+    refreshPlaylists();
+}
+
+void Backend::movePlaylist(qint64 id, int index)
+{
+    QList<qint64> ids;
+    for (const Playlist &p : m_db.playlists())
+        if (p.kind != QLatin1String("cache"))
+            ids << p.id;
+    const int from = int(ids.indexOf(id));
+    // Les index de la barre latérale comptent « Cache local », toujours en premier.
+    const int to = qBound(0, index - 1, int(ids.size()) - 1);
+    if (from < 0 || from == to)
+        return;
+    ids.move(from, to);
+    m_db.setPlaylistOrder(ids);
     refreshPlaylists();
 }
 

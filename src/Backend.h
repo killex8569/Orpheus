@@ -178,6 +178,8 @@ public:
     // {id de playlist: "same" | "similar"} pour le morceau d'une liste (menu « Ajouter à »).
     Q_INVOKABLE QVariantMap playlistMarks(const QString &list, int row);
     Q_INVOKABLE void renamePlaylist(qint64 id, const QString &name);
+    // Déplace une playlist à la position « index » de la barre latérale (« Cache local » reste en tête).
+    Q_INVOKABLE void movePlaylist(qint64 id, int index);
     Q_INVOKABLE void deletePlaylist(qint64 id);
     Q_INVOKABLE void downloadPlaylist(qint64 id);
     Q_INVOKABLE void syncPlaylist(qint64 id) { m_importer->syncPlaylist(id); }

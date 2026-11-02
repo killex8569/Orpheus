@@ -229,6 +229,16 @@ void Player::load(int index, bool resetRetry)
         loadFile(t.filePath, "local");
         return;
     }
+    // Flux préparé pendant le morceau précédent (résultat de recherche) : départ immédiat.
+    // Écouté pour de bon, il rejoint le cache en arrière-plan comme les autres.
+    if (m_pre.trackId == t.id && m_pre.at.secsTo(QDateTime::currentDateTimeUtc()) < 2 * 3600) {
+        const PreStream pre = std::exchange(m_pre, {});
+        qInfo() << "lecture immédiate du flux préparé";
+        loadFile(pre.url, "stream", pre.userAgent);
+        if (m_db->settingBool("auto_cache", true))
+            m_dl->enqueue(t.id);
+        return;
+    }
     // Arrête le morceau précédent pendant le chargement.
     const char *stop[] = {"stop", nullptr};
     mpv_command_async(m_mpv, 0, stop);
@@ -371,19 +381,47 @@ void Player::advance(bool naturalEnd)
 
 void Player::prefetchNext()
 {
-    if (!m_db->settingBool("prefetch", true) || !m_db->settingBool("auto_cache", true))
+    if (!m_db->settingBool("prefetch", true) || m_index + 1 >= m_queue.size())
         return;
+    const Track &next = m_queue[m_index + 1];
+    if (next.isLocal())
+        return;
+    // Résultat de recherche : on prépare seulement le flux (rien n'est téléchargé).
+    if (m_browseOnly.contains(next.id)) {
+        preResolve(next);
+        return;
+    }
     // Pas de préchargement des vidéos très longues (compilations de plusieurs heures).
-    if (m_index + 1 < m_queue.size() && m_queue[m_index + 1].duration < 20 * 60)
-        m_dl->enqueue(m_queue[m_index + 1].id);
+    if (m_db->settingBool("auto_cache", true) && next.duration < 20 * 60)
+        m_dl->enqueue(next.id);
+}
+
+void Player::preResolve(const Track &t)
+{
+    if (t.ytId.isEmpty() || m_preResolving == t.id || m_pre.trackId == t.id)
+        return;
+    m_preResolving = t.id;
+    m_yt->resolveStream(t.ytId, [this, id = t.id](QString url, QString ua, QString err) {
+        if (m_preResolving == id)
+            m_preResolving = 0;
+        if (!err.isEmpty() || url.isEmpty())
+            return;  // le chargement normal prendra le relais
+        m_pre = {id, url, ua, QDateTime::currentDateTimeUtc()};
+        qInfo() << "flux du morceau suivant prêt (résultat de recherche, non téléchargé)";
+    });
 }
 
 // ---------- Commandes ----------
 
-void Player::playList(const QList<Track> &tracks, int start, bool shuffleOn)
+void Player::playList(const QList<Track> &tracks, int start, bool shuffleOn, bool browseRest)
 {
     if (tracks.isEmpty())
         return;
+    m_browseOnly.clear();
+    if (browseRest)
+        for (int i = 0; i < tracks.size(); ++i)
+            if (i != start)
+                m_browseOnly.insert(tracks[i].id);
     m_queue = tracks;
     m_unshuffled.clear();
     m_index = qBound(0, start, int(tracks.size()) - 1);
@@ -513,6 +551,8 @@ void Player::enqueue(const Track &t, bool playNext)
                 }
         m_unshuffled.insert(at, t);
     }
+    // Ajouté exprès par l'utilisateur : téléchargé d'avance comme une playlist.
+    m_browseOnly.remove(t.id);
     if (m_db->settingBool("prefetch", true) && m_db->settingBool("auto_cache", true))
         m_dl->enqueue(t.id);
     bumpQueue();
@@ -609,6 +649,7 @@ void Player::syncQueue(const QList<Track> &tracks, int index)
     const auto cur = current();
     const bool valid = index >= 0 && index < tracks.size();
     const bool same = valid && cur && cur->id == tracks[index].id && (!m_source.isEmpty() || m_loading);
+    m_browseOnly.clear();
     m_queue = tracks;
     m_unshuffled.clear();
     m_index = valid ? index : -1;

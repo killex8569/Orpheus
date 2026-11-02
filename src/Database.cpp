@@ -150,11 +150,27 @@ bool Database::open(const QString &path, QString *error)
     m_settings.clear();
     for (QSqlQuery st = exec(d, "SELECT key, value FROM settings"); st.next();)
         m_settings.insert(st.value(0).toString(), st.value(1).toString());
+    // Ordre des playlists choisi par l'utilisateur (ajouté en 1.0.2) ; les playlists
+    // existantes gardent leur ordre alphabétique d'origine.
+    bool hasOrder = false;
+    for (QSqlQuery c = exec(d, "PRAGMA table_info(playlists)"); c.next();)
+        hasOrder |= c.value(1).toString() == QLatin1String("sort_order");
+    if (!hasOrder)
+        exec(d, "ALTER TABLE playlists ADD COLUMN sort_order INTEGER");
+    {
+        QList<qint64> unordered;
+        for (QSqlQuery u = exec(d, "SELECT id FROM playlists WHERE sort_order IS NULL ORDER BY name COLLATE NOCASE"); u.next();)
+            unordered << u.value(0).toLongLong();
+        QSqlQuery mx = exec(d, "SELECT COALESCE(MAX(sort_order), 0) FROM playlists");
+        int next = mx.next() ? mx.value(0).toInt() : 0;
+        for (qint64 id : std::as_const(unordered))
+            exec(d, "UPDATE playlists SET sort_order = ? WHERE id = ?", {++next, id});
+    }
     QSqlQuery q = exec(d, "SELECT id FROM playlists WHERE kind = 'cache'");
     if (q.next()) {
         m_cachePlaylist = q.value(0).toLongLong();
     } else {
-        QSqlQuery ins = exec(d, "INSERT INTO playlists(name, kind, created_at) VALUES (?, 'cache', ?)",
+        QSqlQuery ins = exec(d, "INSERT INTO playlists(name, kind, created_at, sort_order) VALUES (?, 'cache', ?, 0)",
                              {kCacheName, nowSecs()});
         m_cachePlaylist = ins.lastInsertId().toLongLong();
     }
@@ -486,7 +502,7 @@ QList<Playlist> Database::playlists() const
                        " COALESCE(SUM(CASE WHEN t.state = 'ready' THEN t.file_size END), 0) "
                        "FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id "
                        "LEFT JOIN tracks t ON t.id = pt.track_id "
-                       "GROUP BY p.id ORDER BY p.kind != 'cache', p.name COLLATE NOCASE");
+                       "GROUP BY p.id ORDER BY p.kind != 'cache', p.sort_order, p.name COLLATE NOCASE");
     QList<Playlist> out;
     while (q.next()) {
         Playlist p;
@@ -514,9 +530,21 @@ std::optional<Playlist> Database::playlist(qint64 id) const
 
 qint64 Database::createPlaylist(const QString &name, const QString &kind, const QString &sourceRef)
 {
-    QSqlQuery q = exec(db(), "INSERT INTO playlists(name, kind, source_ref, created_at) VALUES (?, ?, ?, ?)",
+    // Une nouvelle playlist se place en dernier.
+    QSqlQuery q = exec(db(),
+                       "INSERT INTO playlists(name, kind, source_ref, created_at, sort_order) VALUES (?, ?, ?, ?, "
+                       "(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM playlists))",
                        {name, kind, nullable(sourceRef), nowSecs()});
     return q.lastInsertId().toLongLong();
+}
+
+void Database::setPlaylistOrder(const QList<qint64> &ids)
+{
+    QSqlDatabase d = db();
+    d.transaction();
+    for (int i = 0; i < ids.size(); ++i)
+        exec(d, "UPDATE playlists SET sort_order = ? WHERE id = ?", {i + 1, ids[i]});
+    d.commit();
 }
 
 std::optional<qint64> Database::playlistBySource(const QString &kind, const QString &sourceRef) const

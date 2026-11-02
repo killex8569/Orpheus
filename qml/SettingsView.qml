@@ -197,6 +197,12 @@ ScrollView {
                               ["chromium", "Chromium"], ["edge", "Edge"], ["vivaldi", "Vivaldi"], ["opera", "Opera"]]
                 }
             }
+            Text {
+                visible: Qt.platform.os === "windows"
+                text: "Sous Windows, Chrome, Edge, Brave et les autres navigateurs Chromium chiffrent leurs cookies : seul Firefox fonctionne. "
+                      + "Si les cookies sont illisibles, Orpheus continue sans eux (recherche, lecture et imports Spotify restent possibles)."
+                color: OTheme.muted; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
         }
 
         Card {

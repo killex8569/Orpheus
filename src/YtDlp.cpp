@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QVersionNumber>
@@ -187,9 +188,27 @@ QStringList YtDlp::baseArgs() const
     // YouTube exige un moteur JavaScript pour déchiffrer les flux.
     if (!m_deno.isEmpty())
         a << "--js-runtimes" << ("deno:" + m_deno);
-    if (!m_cookiesBrowser.isEmpty())
+    if (!m_cookiesBrowser.isEmpty() && !m_cookiesBroken)
         a << "--cookies-from-browser" << m_cookiesBrowser;
     return a;
+}
+
+bool YtDlp::dropBrokenCookies(const QString &stderrText)
+{
+    if (m_cookiesBrowser.isEmpty() || m_cookiesBroken)
+        return false;
+    // Erreurs de lecture des cookies uniquement : « Sign in to confirm… » mentionne aussi
+    // --cookies-from-browser mais demande au contraire des cookies.
+    static const QRegularExpression re(
+        QStringLiteral("cookies? database|DPAPI|failed to decrypt|could not copy .*cookie|"
+                       "failed to load cookies|cookies? (file|store) .*(locked|permission)"),
+        QRegularExpression::CaseInsensitiveOption);
+    if (!re.match(stderrText).hasMatch())
+        return false;
+    qWarning() << "cookies de" << m_cookiesBrowser << "illisibles, on continue sans :" << ytdlpError(stderrText);
+    m_cookiesBroken = true;
+    emit cookiesUnavailable(m_cookiesBrowser);
+    return true;
 }
 
 void YtDlp::runJson(const QStringList &args, int timeoutMs, std::function<void(QJsonDocument, QString)> cb)
@@ -203,7 +222,7 @@ void YtDlp::runJson(const QStringList &args, int timeoutMs, std::function<void(Q
     auto timer = new QTimer(p);
     timer->setSingleShot(true);
     connect(timer, &QTimer::timeout, p, [p] { p->kill(); });
-    connect(p, &QProcess::finished, this, [p, cb, finished](int code, QProcess::ExitStatus st) {
+    connect(p, &QProcess::finished, this, [this, p, args, timeoutMs, cb, finished](int code, QProcess::ExitStatus st) {
         if (*finished)
             return;
         *finished = true;
@@ -215,6 +234,14 @@ void YtDlp::runJson(const QStringList &args, int timeoutMs, std::function<void(Q
             return;
         }
         if (code != 0) {
+            // Cookies illisibles : même requête sans eux (recherche, import Spotify…),
+            // sauf pour ce qui exige le compte YouTube.
+            const bool needsAccount = args.join(' ').contains(QLatin1String("feed/playlists"))
+                                      || args.join(' ').contains(QLatin1String("list=LM"));
+            if (dropBrokenCookies(err) && !needsAccount) {
+                runJson(args, timeoutMs, cb);
+                return;
+            }
             cb({}, ytdlpError(err));
             return;
         }
@@ -423,7 +450,7 @@ QProcess *YtDlp::download(const QString &ytId, const QString &libraryDir, const 
             }
         }
     });
-    connect(p, &QProcess::finished, this, [=](int code, QProcess::ExitStatus st) {
+    connect(p, &QProcess::finished, this, [=, this](int code, QProcess::ExitStatus st) {
         if (*finished)
             return;
         *finished = true;
@@ -432,6 +459,8 @@ QProcess *YtDlp::download(const QString &ytId, const QString &libraryDir, const 
         if (st != QProcess::NormalExit) {
             done({}, QStringLiteral("téléchargement interrompu"));
         } else if (code != 0) {
+            // Cookies illisibles : désactivés, le prochain essai automatique s'en passera.
+            dropBrokenCookies(err);
             done({}, ytdlpError(err));
         } else if (result->path.isEmpty() || !QFileInfo::exists(result->path)) {
             done({}, QStringLiteral("fichier téléchargé introuvable"));

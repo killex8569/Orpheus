@@ -1,4 +1,6 @@
 #include <QSignalSpy>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -403,6 +405,48 @@ private slots:
         db.addToPlaylist(pl, c.id);
         db.moveInPlaylist(pl, c.id, 0);
         QCOMPARE(db.playlistTracks(pl).first().id, c.id);
+    }
+
+    void playlistOrder()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath("o.db");
+        auto names = [](const Database &db) {
+            QStringList out;
+            for (const Playlist &p : db.playlists())
+                out << p.name;
+            return out;
+        };
+        {
+            // Base d'une version précédente : pas de colonne sort_order.
+            QSqlDatabase old = QSqlDatabase::addDatabase("QSQLITE", "old");
+            old.setDatabaseName(path);
+            QVERIFY(old.open());
+            QSqlQuery q(old);
+            QVERIFY(q.exec("CREATE TABLE playlists (id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,"
+                           " source_ref TEXT, created_at INTEGER NOT NULL)"));
+            QVERIFY(q.exec("INSERT INTO playlists(name, kind, created_at) VALUES ('Cache local', 'cache', 0),"
+                           " ('zouk', 'user', 0), ('Ambient', 'user', 0), ('Metal', 'spotify', 0)"));
+            old.close();
+        }
+        QSqlDatabase::removeDatabase("old");
+
+        Database db;
+        QVERIFY(db.open(path, nullptr));
+        // Migration : l'ordre alphabétique d'avant est conservé, « Cache local » en tête.
+        QCOMPARE(names(db), QStringList({"Cache local", "Ambient", "Metal", "zouk"}));
+        // Une nouvelle playlist arrive en dernier, pas à sa place alphabétique.
+        db.createPlaylist("Bossa", "user");
+        QCOMPARE(names(db), QStringList({"Cache local", "Ambient", "Metal", "zouk", "Bossa"}));
+        // Nouvel ordre choisi, conservé après réouverture.
+        QList<qint64> ids;
+        for (const Playlist &p : db.playlists())
+            if (p.kind != "cache")
+                ids.prepend(p.id);
+        db.setPlaylistOrder(ids);
+        Database reopened;
+        QVERIFY(reopened.open(path, nullptr));
+        QCOMPARE(names(reopened), QStringList({"Cache local", "Bossa", "zouk", "Metal", "Ambient"}));
     }
 };
 

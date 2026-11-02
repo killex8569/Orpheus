@@ -115,6 +115,8 @@ public:
     qint64 createPlaylist(const QString &name, const QString &kind, const QString &sourceRef = {});
     std::optional<qint64> playlistBySource(const QString &kind, const QString &sourceRef) const;
     void renamePlaylist(qint64 id, const QString &name);
+    // Nouvel ordre des playlists (identifiants dans l'ordre voulu).
+    void setPlaylistOrder(const QList<qint64> &ids);
     bool deletePlaylist(qint64 id);
     QList<Track> playlistTracks(qint64 id) const;
     void addToPlaylist(qint64 playlistId, qint64 trackId);
