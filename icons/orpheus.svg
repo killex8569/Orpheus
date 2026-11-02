@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="0.55" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#0e7490"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- Fond -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+  <rect x="8" y="8" width="240" height="120" rx="56" fill="url(#shine)"/>
+  <!-- Lyre d'Orphée -->
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Bras -->
+    <path d="M88 60 C 58 78, 62 132, 92 160 L 108 196" stroke-width="14"/>
+    <path d="M168 60 C 198 78, 194 132, 164 160 L 148 196" stroke-width="14"/>
+    <!-- Joug -->
+    <path d="M78 88 L 178 88" stroke-width="12"/>
+    <!-- Caisse -->
+    <path d="M100 196 L 156 196" stroke-width="14"/>
+    <!-- Cordes -->
+    <path d="M110 88 V 190 M128 88 V 190 M146 88 V 190" stroke-width="6" stroke-opacity="0.9"/>
+  </g>
+  <!-- Volutes -->
+  <circle cx="86" cy="58" r="10" fill="#ffffff"/>
+  <circle cx="170" cy="58" r="10" fill="#ffffff"/>
+</svg>

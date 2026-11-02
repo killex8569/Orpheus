@@ -60,7 +60,8 @@ Rectangle {
             Layout.topMargin: 6
             Layout.bottomMargin: 18
             spacing: 10
-            Icon { iconName: "music"; size: 24; color: OTheme.accent }
+            Image { source: OTheme.icon("orpheus"); sourceSize: Qt.size(56, 56)
+                    Layout.preferredWidth: 28; Layout.preferredHeight: 28 }
             Text { text: "Orpheus"; color: OTheme.text; font.pixelSize: 20; font.weight: Font.DemiBold }
         }
 
