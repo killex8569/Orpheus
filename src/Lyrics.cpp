@@ -57,7 +57,7 @@ void LyricsClient::search(const QUrlQuery &query, std::function<void(QJsonArray,
     url.setQuery(query);
     QNetworkRequest req(url);
     // LRCLIB demande d'identifier l'application.
-    req.setHeader(QNetworkRequest::UserAgentHeader, "Orpheus/1.0.0 (lecteur de musique de bureau)");
+    req.setHeader(QNetworkRequest::UserAgentHeader, QByteArray("Orpheus/" ORPHEUS_VERSION " (lecteur de musique de bureau)"));
     QNetworkReply *r = m_net.get(req);
     connect(r, &QNetworkReply::finished, this, [this, r, cb, query, attempt] {
         r->deleteLater();
