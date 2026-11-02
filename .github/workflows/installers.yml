@@ -88,8 +88,10 @@ jobs:
 
           # PATH réduit au système : tout doit venir du dossier installé, pas de MSYS2.
           $env:PATH = "$env:SystemRoot\system32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
-          & "$app\ffmpeg.exe" -hide_banner -version | Select-Object -First 1
+          # Sortie lue en entier : couper le flux (Select -First) ferait échouer ffmpeg.
+          $out = & "$app\ffmpeg.exe" -hide_banner -version
           if ($LASTEXITCODE -ne 0) { throw "ffmpeg ne démarre pas" }
+          $out[0]
           & "$app\deno.exe" --version
           if ($LASTEXITCODE -ne 0) { throw "deno ne démarre pas" }
 
