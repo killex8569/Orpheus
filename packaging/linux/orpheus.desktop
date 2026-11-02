@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Orpheus
+GenericName=Lecteur de musique
+GenericName[en]=Music player
+Comment=Lecteur de musique (YouTube, Spotify, cache local)
+Comment[en]=Music player (YouTube, Spotify, local cache)
+Exec=orpheus
+Icon=orpheus
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;musique;youtube;spotify;player;
+StartupWMClass=orpheus

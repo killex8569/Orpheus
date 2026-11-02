@@ -61,7 +61,8 @@ class Backend : public QObject {
     Q_PROPERTY(QString spotifyUser READ spotifyUser NOTIFY accountsChanged)
     Q_PROPERTY(QString spotifyRedirect READ spotifyRedirect CONSTANT)
     Q_PROPERTY(QString ytdlpInfo READ ytdlpInfo NOTIFY accountsChanged)
-    Q_PROPERTY(bool hasDeno READ hasDeno CONSTANT)
+    Q_PROPERTY(bool hasJsRuntime READ hasJsRuntime CONSTANT)
+    Q_PROPERTY(QString jsRuntimeName READ jsRuntimeName CONSTANT)
     Q_PROPERTY(QString cacheInfo READ cacheInfo NOTIFY downloadsChanged)
     Q_PROPERTY(QString dataDir READ dataDir CONSTANT)
     Q_PROPERTY(QVariantList remoteYoutube READ remoteYoutube NOTIFY remoteChanged)
@@ -128,7 +129,8 @@ public:
     QString spotifyUser() const { return m_spotify->userName(); }
     QString spotifyRedirect() const { return Spotify::RedirectUri; }
     QString ytdlpInfo() const;
-    bool hasDeno() const { return m_yt->hasDeno(); }
+    bool hasJsRuntime() const { return m_yt->hasJsRuntime(); }
+    QString jsRuntimeName() const { return m_yt->jsRuntimeName(); }
     QString cacheInfo() const;
     QString dataDir() const { return m_paths.data; }
     QVariantList remoteYoutube() const { return m_remoteYoutube; }

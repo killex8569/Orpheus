@@ -253,8 +253,9 @@ ScrollView {
             subtitle: "Outil utilisé pour YouTube. Une version à jour évite la plupart des erreurs : Orpheus peut gérer sa propre copie et la mettre à jour automatiquement à chaque démarrage."
             Text { text: backend.ytdlpInfo; color: OTheme.text; font.pixelSize: 13; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
             Text {
-                text: backend.hasDeno ? "Moteur JavaScript deno : détecté ✓" : "Moteur JavaScript deno absent (requis par YouTube)"
-                color: backend.hasDeno ? OTheme.muted : OTheme.warn
+                text: backend.hasJsRuntime ? "Moteur JavaScript " + backend.jsRuntimeName + " : détecté ✓"
+                                           : "Aucun moteur JavaScript (deno ou Node.js) : requis par YouTube"
+                color: backend.hasJsRuntime ? OTheme.muted : OTheme.warn
                 font.pixelSize: 13
             }
             PillButton { text: "Installer / mettre à jour yt-dlp"; iconName: "sync"; onClicked: backend.updateYtDlp() }

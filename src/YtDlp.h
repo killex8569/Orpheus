@@ -29,7 +29,9 @@ public:
     explicit YtDlp(const QString &managedDir, QObject *parent = nullptr);
 
     QString binary() const { return m_bin; }
-    bool hasDeno() const { return !m_deno.isEmpty(); }
+    bool hasJsRuntime() const { return !m_jsRuntime.isEmpty(); }
+    // « deno » ou « node » (vide : aucun moteur JavaScript trouvé).
+    QString jsRuntimeName() const { return m_jsRuntime.section(':', 0, 0); }
     bool isManaged() const;
     void setCookiesBrowser(const QString &b)
     {
@@ -70,7 +72,7 @@ private:
     QString m_managedDir;
     QString m_bin;
     QStringList m_candidates;
-    QString m_deno;
+    QString m_jsRuntime;  // « deno:/chemin » ou « node:/chemin »
     QString m_cookiesBrowser;
     bool m_cookiesBroken = false;
 };

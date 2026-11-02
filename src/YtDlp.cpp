@@ -122,7 +122,13 @@ void YtDlp::redetect()
         add(dir + "/yt-dlp");
     if (!m_candidates.contains(m_bin))
         m_bin = m_candidates.value(0);
-    m_deno = findExecutable("deno");
+    // Moteur JavaScript exigé par YouTube : deno de préférence, sinon Node.js (paquet des
+    // distributions, ex. Fedora, où deno n'existe pas).
+    m_jsRuntime.clear();
+    if (const QString deno = findExecutable("deno"); !deno.isEmpty())
+        m_jsRuntime = "deno:" + deno;
+    else if (const QString node = findExecutable("node"); !node.isEmpty())
+        m_jsRuntime = "node:" + node;
 }
 
 void YtDlp::selectNewest(std::function<void(QString)> cb)
@@ -186,8 +192,8 @@ QStringList YtDlp::baseArgs() const
 {
     QStringList a{"--no-warnings", "--ignore-config", "--socket-timeout", "20"};
     // YouTube exige un moteur JavaScript pour déchiffrer les flux.
-    if (!m_deno.isEmpty())
-        a << "--js-runtimes" << ("deno:" + m_deno);
+    if (!m_jsRuntime.isEmpty())
+        a << "--js-runtimes" << m_jsRuntime;
     if (!m_cookiesBrowser.isEmpty() && !m_cookiesBroken)
         a << "--cookies-from-browser" << m_cookiesBrowser;
     return a;

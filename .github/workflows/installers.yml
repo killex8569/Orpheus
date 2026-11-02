@@ -1,4 +1,4 @@
-# Installeurs Windows (.exe) et macOS (.dmg).
+# Installeurs Windows (.exe), macOS (.dmg) et paquet Fedora (.rpm).
 #
 # - Tag « v* » poussé : construit les installeurs et les ajoute à la release du tag
 #   (créée si elle n'existe pas encore).
@@ -203,10 +203,79 @@ jobs:
             orpheus.log
           if-no-files-found: ignore
 
+  linux:
+    name: Fedora (.rpm)
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:44
+    steps:
+      - name: Outils
+        run: dnf install -y -q git rpm-build tar gzip 'dnf-command(builddep)'
+
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: echo "version=$(sed -n 's/^project(orpheus VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Paquet RPM (compilation et tests)
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          T="$PWD/rpmbuild"
+          mkdir -p "$T/SOURCES" dist
+          git archive --format=tar.gz --prefix="orpheus-$V/" -o "$T/SOURCES/orpheus-$V.tar.gz" HEAD
+          dnf builddep -y -q packaging/linux/orpheus.spec
+          rpmbuild -ba --define "_topdir $T" --define "orpheus_version $V" packaging/linux/orpheus.spec
+          cp "$T"/RPMS/x86_64/orpheus-"$V"-*.x86_64.rpm dist/
+          # QML en bytecode seulement : aucune dépendance à l'API privée d'une version de Qt.
+          if rpm -qpR dist/*.rpm | grep PRIVATE_API; then echo "::error::dépendance à l'API privée de Qt"; exit 1; fi
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orpheus-linux
+          path: dist/*.rpm
+          if-no-files-found: error
+
+  linux-test:
+    name: Fedora (.rpm) — test sur un système vierge
+    needs: linux
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:44
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: orpheus-linux
+          path: dist
+
+      - name: Test (installation, démarrage, désinstallation)
+        run: |
+          dnf install -y -q dist/*.rpm
+          rpm -q orpheus
+          command -v ffmpeg node python3
+          export QT_QPA_PLATFORM=offscreen ORPHEUS_HOME="$RUNNER_TEMP/orpheus-home" QT_FORCE_STDERR_LOGGING=1
+          export ORPHEUS_SCREENSHOT="$PWD/screenshot-linux.png" ORPHEUS_SCREENSHOT_DELAY=20000
+          timeout 90 orpheus 2> orpheus.log || { cat orpheus.log; exit 1; }
+          cat orpheus.log
+          [[ -f $ORPHEUS_SCREENSHOT ]] && echo "Capture d'écran OK" || echo "::warning::pas de capture d'écran"
+          if [[ -x $ORPHEUS_HOME/bin/yt-dlp ]]; then "$ORPHEUS_HOME/bin/yt-dlp" --version; else echo "::warning::yt-dlp n'a pas été téléchargé par Orpheus"; fi
+          dnf remove -y -q orpheus
+          ! command -v orpheus && echo "Désinstallation OK"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-linux
+          path: |
+            screenshot-linux.png
+            orpheus.log
+          if-no-files-found: ignore
+
   release:
     name: Ajout à la release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, macos]
+    needs: [windows, macos, linux-test]
     runs-on: ubuntu-latest
     permissions:
       contents: write

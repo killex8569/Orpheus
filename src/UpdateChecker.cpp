@@ -57,8 +57,8 @@ QString UpdateChecker::lastCheckText() const
 
 QString UpdateChecker::updateCommand() const
 {
-#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
-    // Installé par un installeur : la mise à jour passe par le nouvel installeur de la release.
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS) || defined(ORPHEUS_PACKAGE)
+    // Installé par un installeur ou un paquet : la mise à jour passe par celui de la release.
     return {};
 #endif
     const QString src = QStringLiteral(ORPHEUS_SOURCE_DIR);

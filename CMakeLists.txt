@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(orpheus VERSION 1.1.0 LANGUAGES CXX)
+project(orpheus VERSION 1.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -52,6 +52,11 @@ target_include_directories(orpheus_core PUBLIC src)
 # Mises à jour : version locale (celle du projet) comparée à la dernière release GitHub.
 set(ORPHEUS_REPO "killex8569/Orpheus" CACHE STRING "Dépôt GitHub dont les releases sont suivies")
 target_compile_definitions(orpheus_core PRIVATE ORPHEUS_VERSION="${PROJECT_VERSION}" ORPHEUS_REPO="${ORPHEUS_REPO}")
+# Version empaquetée (ex. « rpm ») : la mise à jour passe par le nouveau paquet de la release.
+set(ORPHEUS_PACKAGE "" CACHE STRING "Format de paquet (rpm…) ; vide pour une compilation depuis les sources")
+if(ORPHEUS_PACKAGE)
+    target_compile_definitions(orpheus_core PRIVATE ORPHEUS_PACKAGE="${ORPHEUS_PACKAGE}")
+endif()
 # Dossier des sources : sert à proposer la bonne commande de mise à jour (git pull).
 set_source_files_properties(src/UpdateChecker.cpp PROPERTIES COMPILE_DEFINITIONS ORPHEUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(orpheus_core PUBLIC Qt6::Core Qt6::Gui Qt6::Sql Qt6::Network)
@@ -112,6 +117,12 @@ foreach(f ${QML_SOURCES})
     set_source_files_properties(${f} PROPERTIES QT_RESOURCE_ALIAS ${name})
 endforeach()
 file(GLOB ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} icons/*.svg)
+# Paquets de distribution : QML précompilé en bytecode seulement. La compilation en C++
+# (par défaut) utilise l'API privée de Qt, ce qui lierait le paquet à une version exacte
+# de Qt et bloquerait les mises à jour de Qt de la distribution.
+if(ORPHEUS_PACKAGE)
+    set_target_properties(orpheus PROPERTIES QT_QMLCACHEGEN_ARGUMENTS "--only-bytecode")
+endif()
 qt_add_qml_module(orpheus
     URI Orpheus
     VERSION 1.0
@@ -141,6 +152,12 @@ qt_add_qml_module(orpheus
 )
 
 install(TARGETS orpheus RUNTIME DESTINATION bin BUNDLE DESTINATION .)
+if(UNIX AND NOT APPLE)
+    # Entrée du menu des applications et icône (paquets Linux : RPM…).
+    include(GNUInstallDirs)
+    install(FILES packaging/linux/orpheus.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES icons/orpheus.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+endif()
 
 # Tests unitaires du cœur.
 enable_testing()

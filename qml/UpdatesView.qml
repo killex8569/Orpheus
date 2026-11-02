@@ -125,7 +125,9 @@ ScrollView {
         Card {
             visible: scroll.up.updateAvailable && scroll.up.updateCommand === ""
             title: "Installer la mise à jour"
-            subtitle: "Téléchargez l'installeur de la nouvelle version (fichier .exe pour Windows, .dmg pour macOS) dans la release, puis lancez-le : il remplace la version actuelle sans toucher à vos morceaux ni à vos playlists. Fermez Orpheus avant."
+            subtitle: "Téléchargez l'installeur de la nouvelle version dans la release (.exe pour Windows, .dmg pour macOS, .rpm pour Fedora), puis ouvrez-le : "
+                      + "il remplace la version actuelle sans toucher à vos morceaux ni à vos playlists. Fermez Orpheus avant. "
+                      + "Fedora : sudo dnf install ./orpheus-*.rpm"
             PillButton {
                 text: "Télécharger l'installeur"; iconName: "download"
                 onClicked: Qt.openUrlExternally(scroll.up.releaseUrl)

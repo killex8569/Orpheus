@@ -17,6 +17,18 @@ Dependencies: Qt 6.5+ (`qt6-qtbase-devel`, `qt6-qtdeclarative-devel`, `qt6-qtsvg
 
 Manual build: `cmake -S . -B build -G Ninja && cmake --build build && ./build/orpheus`
 
+### Fedora (RPM package)
+
+Download `orpheus-x.y.z-1.fc44.x86_64.rpm` from the [latest release](https://github.com/killex8569/Orpheus/releases/latest), then:
+
+```bash
+sudo dnf install ./orpheus-*.rpm     # pulls Qt, mpv, ffmpeg and Node.js from Fedora's repositories
+orpheus                              # also in the applications menu
+sudo dnf remove orpheus              # your music and playlists are kept
+```
+
+Built for Fedora 44. YouTube needs a JavaScript engine: Node.js is installed with the package (deno is used instead if present). To update, install the RPM of the new release the same way. Don't mix it with `./install.sh`: that one installs into `~/.local/bin`, which comes first in the `PATH`.
+
 ### Windows and macOS
 
 Download the installer from the [latest release](https://github.com/killex8569/Orpheus/releases/latest). Everything is included (Qt, libmpv, ffmpeg, deno); yt-dlp is downloaded by Orpheus on first launch and kept up to date.
@@ -26,7 +38,7 @@ Download the installer from the [latest release](https://github.com/killex8569/O
 
 To update, run the new installer: your tracks and playlists are kept (see [Data](#data) for where they live). No MPRIS outside Linux; media keys work while the window has focus.
 
-The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Setup on Windows, Homebrew + macdeployqt on macOS). Pushing a `v*` tag attaches them to the release.
+The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Setup on Windows, Homebrew + macdeployqt on macOS, `packaging/linux/orpheus.spec` in a Fedora container for the RPM). Each one is installed and launched on a clean system before the release. Pushing a `v*` tag attaches them to the release.
 
 ## Features
 
