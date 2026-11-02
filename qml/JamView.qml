@@ -6,12 +6,28 @@ import QtQuick.Layouts
 Item {
     id: root
     readonly property var jam: backend.jam
+    property bool searchOpen: false
+
+    function runSearch() {
+        if (jamSearch.text.trim() === "")
+            return
+        backend.search(jamSearch.text, backend.searchSource)
+        searchOpen = true
+    }
+    function closeSearch() { searchOpen = false; jamSearch.text = "" }
 
     // Recherche des Jams du réseau seulement quand la vue est affichée.
     function updateDiscovery() { jam.setDiscovering(visible && !jam.active) }
     onVisibleChanged: updateDiscovery()
     Component.onCompleted: updateDiscovery()
-    Connections { target: root.jam; function onChanged() { root.updateDiscovery() } }
+    Connections {
+        target: root.jam
+        function onChanged() {
+            root.updateDiscovery()
+            if (!root.jam.active)
+                root.searchOpen = false
+        }
+    }
 
     component Field: TextField {
         id: tf
@@ -224,18 +240,131 @@ Item {
             }
         }
 
+        // Recherche de morceaux à ajouter au Jam (mêmes sources que l'onglet Rechercher).
         RowLayout {
             Layout.fillWidth: true
-            Text { text: "File du Jam"; color: OTheme.text; font.pixelSize: 17; font.weight: Font.DemiBold; Layout.fillWidth: true }
-            Text { text: root.jam.queue.count + " morceaux"; color: OTheme.muted; font.pixelSize: 13 }
+            spacing: 10
+            TextField {
+                id: jamSearch
+                Layout.fillWidth: true
+                implicitHeight: 40
+                placeholderText: "Rechercher un morceau à ajouter au Jam…"
+                placeholderTextColor: OTheme.muted
+                color: OTheme.text
+                font.pixelSize: 14
+                leftPadding: 42
+                selectByMouse: true
+                onAccepted: root.runSearch()
+                Keys.onEscapePressed: root.closeSearch()
+                background: Rectangle {
+                    radius: 20
+                    color: OTheme.panel2
+                    border.color: jamSearch.activeFocus ? OTheme.accent : OTheme.border
+                    Icon { iconName: "search"; size: 16; color: OTheme.muted; anchors.verticalCenter: parent.verticalCenter; x: 15 }
+                }
+            }
+            PillButton { text: "Chercher"; primary: true; implicitHeight: 40; enabled: jamSearch.text.trim() !== ""; onClicked: root.runSearch() }
         }
 
-        TrackList {
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            listName: "jam"
-            model: root.jam.queue
-            emptyText: "File vide : ajoutez des morceaux depuis la recherche ou vos playlists\n(double-clic, ou clic droit → Ajouter au Jam)."
+            spacing: 18
+
+            // File commune.
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredWidth: 1
+                spacing: 8
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "File du Jam"; color: OTheme.text; font.pixelSize: 17; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                    Text { text: root.jam.queue.count + " morceaux"; color: OTheme.muted; font.pixelSize: 13 }
+                }
+                TrackList {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    listName: "jam"
+                    model: root.jam.queue
+                    emptyText: "File vide : cherchez un morceau ci-dessus,\nou ajoutez-en depuis vos playlists."
+                }
+            }
+
+            // Résultats de recherche (double-clic : ajouter au Jam).
+            ColumnLayout {
+                visible: root.searchOpen
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredWidth: 1
+                spacing: 8
+                RowLayout {
+                    Layout.fillWidth: true
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 0
+                        Text { text: "Ajouter au Jam"; color: OTheme.text; font.pixelSize: 17; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                        Text { text: "Double-clic sur un morceau pour l'ajouter"; color: OTheme.muted; font.pixelSize: 12 }
+                    }
+                    IconButton { iconName: "close"; iconSize: 15; tip: "Fermer la recherche (Échap)"; onClicked: root.closeSearch() }
+                }
+                RowLayout {
+                    visible: backend.searching
+                    spacing: 10
+                    Spinner { size: 16 }
+                    Text { text: "Recherche…"; color: OTheme.muted; font.pixelSize: 13 }
+                }
+                Text {
+                    visible: !backend.searching && backend.searchError !== ""
+                    text: backend.searchError
+                    color: OTheme.err; font.pixelSize: 13
+                    wrapMode: Text.WordWrap; Layout.fillWidth: true
+                }
+                Text {
+                    visible: !backend.searching && backend.searchError === ""
+                             && backend.searchResults.count === 0 && backend.localResults.count === 0
+                    text: "Aucun résultat."
+                    color: OTheme.muted; font.pixelSize: 13
+                }
+                ScrollView {
+                    id: results
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: !backend.searching
+                    contentWidth: availableWidth
+                    clip: true
+                    ColumnLayout {
+                        width: results.availableWidth
+                        spacing: 6
+                        WheelScroll { flickable: results.contentItem }
+                        Text {
+                            visible: backend.localResults.count > 0
+                            text: "Déjà en local"
+                            color: OTheme.muted; font.pixelSize: 13; font.weight: Font.DemiBold
+                        }
+                        TrackList {
+                            visible: backend.localResults.count > 0
+                            Layout.fillWidth: true
+                            fitContent: true
+                            listName: "local"
+                            model: backend.localResults
+                        }
+                        Text {
+                            visible: backend.searchResults.count > 0
+                            Layout.topMargin: backend.localResults.count > 0 ? 8 : 0
+                            text: backend.searchSource === "spotify" ? "Spotify" : "YouTube"
+                            color: OTheme.muted; font.pixelSize: 13; font.weight: Font.DemiBold
+                        }
+                        TrackList {
+                            visible: backend.searchResults.count > 0
+                            Layout.fillWidth: true
+                            fitContent: true
+                            listName: "search"
+                            model: backend.searchResults
+                        }
+                    }
+                }
+            }
         }
     }
 }

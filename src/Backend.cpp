@@ -32,6 +32,7 @@ bool Backend::init(QString *error)
     m_lyrics = new LyricsService(&m_db, this);
     m_jam = new JamController(&m_db, m_player, &m_paths, this);
     connect(m_jam, &JamController::toast, this, &Backend::toast);
+    connect(m_jam, &JamController::queueChanged, this, &Backend::updateMarks);
     m_searchSource = m_db.setting("search_source", "youtube");
 
     connect(m_player, &Player::stateChanged, this, &Backend::playerChanged);
@@ -189,8 +190,10 @@ void Backend::updateMarks()
 {
     QSet<qint64> ids;
     QSet<QString> keys;
-    if (!targetPlaylistName().isEmpty()) {
-        for (const Track &t : m_db.playlistTracks(m_targetPlaylistId)) {
+    // Pendant un Jam : morceaux de la file commune ; sinon, playlist en cours de remplissage.
+    const bool jam = m_jam && m_jam->active();
+    if (jam || !targetPlaylistName().isEmpty()) {
+        for (const Track &t : jam ? m_jam->queue()->tracks() : m_db.playlistTracks(m_targetPlaylistId)) {
             ids.insert(t.id);
             if (const QString k = Matcher::matchKey(t.artist, t.title); !k.isEmpty())
                 keys.insert(k);

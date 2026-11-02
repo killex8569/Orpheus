@@ -147,6 +147,7 @@ void JamController::onRoleChanged()
         m_player->setExternalControl(false);
         m_queue.setTracks({});
         m_shownItems.clear();
+        emit queueChanged();
         m_loadedItem = -1;
         setStatus({});
     }
@@ -188,6 +189,7 @@ void JamController::onStateChanged()
     if (itemsChanged) {
         m_queue.setTracks(tracks, extra);
         m_shownItems = ids;
+        emit queueChanged();
     }
     // Lecteur : nouveau morceau à charger, ou file modifiée (sans recharger le morceau en cours).
     const Jam::Item *cur = st.current();

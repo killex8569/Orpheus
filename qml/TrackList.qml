@@ -21,6 +21,10 @@ ListView {
     WheelScroll { enabled: !list.fitContent }
     // Morceaux déjà dans la playlist cible grisés (résultats de recherche uniquement).
     readonly property bool showMarks: listName === "search" || listName === "local"
+    // Liste étroite : le texte complémentaire passe sous l'artiste (titres lisibles).
+    readonly property bool narrow: width < 640
+    // Pendant un Jam, les résultats signalent ce qui est déjà dans la file commune.
+    readonly property string marksTarget: backend.jam.active ? "le Jam" : "« " + backend.targetPlaylistName + " »"
 
     readonly property var userPlaylists: backend.playlists.filter(p => p.kind !== "cache")
 
@@ -162,9 +166,10 @@ ListView {
                     }
                 }
                 Text {
-                    text: row.artist + (!row.marked ? ""
-                          : row.inPlaylist === "same" ? "  ·  ✓ déjà dans « " + backend.targetPlaylistName + " »"
-                          : "  ·  ✓ une version est déjà dans « " + backend.targetPlaylistName + " »")
+                    text: row.artist + (list.narrow && row.extra !== "" ? "  ·  " + row.extra : "")
+                          + (!row.marked ? ""
+                          : row.inPlaylist === "same" ? "  ·  ✓ déjà dans " + list.marksTarget
+                          : "  ·  ✓ une version est déjà dans " + list.marksTarget)
                     color: OTheme.muted
                     font.pixelSize: 12
                     elide: Text.ElideRight
@@ -172,7 +177,7 @@ ListView {
                 }
             }
             Text {
-                visible: row.extra !== ""
+                visible: row.extra !== "" && !list.narrow
                 text: row.extra
                 color: OTheme.muted
                 font.pixelSize: 12

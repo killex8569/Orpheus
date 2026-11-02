@@ -65,6 +65,7 @@ public:
 
 signals:
     void changed();
+    void queueChanged();  // morceaux de la file commune ajoutés, retirés ou déplacés
     void statusChanged();
     void discoveredChanged();
     void settingsChanged();
