@@ -179,6 +179,15 @@ private slots:
         QVERIFY(Jam::isValidYtId("dQw4w9WgXcQ"));
         QVERIFY(!Jam::isValidYtId("../../etc/x"));
         QVERIFY(!Jam::isValidYtId("--exec=rm -"));
+        // Code d'accès : exactement 4 chiffres ; la preuve dépend du code et du défi.
+        QVERIFY(Jam::isValidCode("0420"));
+        QVERIFY(!Jam::isValidCode("123"));
+        QVERIFY(!Jam::isValidCode("12345"));
+        QVERIFY(!Jam::isValidCode("12a4"));
+        QCOMPARE(Jam::codeProof("1234", "abc"), Jam::codeProof("1234", "abc"));
+        QVERIFY(Jam::codeProof("1234", "abc") != Jam::codeProof("1235", "abc"));
+        QVERIFY(Jam::codeProof("1234", "abc") != Jam::codeProof("1234", "abd"));
+        QVERIFY(!Jam::codeProof("1234", "abc").contains("1234"));
         QVERIFY(!Jam::Item::fromJson({{"yt", "../../../a"}, {"title", "x"}}));
         const auto it = Jam::Item::fromJson({{"yt", "dQw4w9WgXcQ"}, {"title", "T"}, {"thumb", "file:///etc/passwd"}, {"duration", 1e9}});
         QVERIFY(it);
@@ -211,9 +220,10 @@ private slots:
     void jamSession()
     {
         JamSession hostS, clientS;
-        QVERIFY(hostS.host("Jam test", "Alice", 0));
+        QVERIFY(!hostS.host("Jam test", "Alice", "12", 0));  // code invalide refusé
+        QVERIFY(hostS.host("Jam test", "Alice", "4821", 0));
         QVERIFY(hostS.port() > 0);
-        clientS.join(QHostAddress::LocalHost, hostS.port(), "Bob");
+        clientS.join(QHostAddress::LocalHost, hostS.port(), "Bob", "4821");
         QVERIFY(QTest::qWaitFor([&] { return clientS.state().members.size() == 2 && !clientS.connecting(); }, 3000));
         QCOMPARE(clientS.state().name, QString("Jam test"));
         QCOMPARE(clientS.myId(), 2);
@@ -262,6 +272,39 @@ private slots:
         hostS.leave();
         QVERIFY(QTest::qWaitFor([&] { return clientS.role() == JamSession::None; }, 3000));
         QVERIFY(!notices.isEmpty());
+    }
+
+    void jamAccessCode()
+    {
+        JamSession hostS;
+        QVERIFY(hostS.host("Jam privé", "Alice", "4821", 0));
+        auto attempt = [&](const QString &code) {
+            JamSession guest;
+            QSignalSpy notices(&guest, &JamSession::notice);
+            guest.join(QHostAddress::LocalHost, hostS.port(), "Intrus", code);
+            (void)QTest::qWaitFor([&] { return guest.role() == JamSession::None || !guest.connecting(); }, 3000);
+            const bool joined = guest.role() == JamSession::Client && !guest.connecting();
+            const QString msg = notices.isEmpty() ? QString() : notices.first().first().toString();
+            guest.leave();
+            return qMakePair(joined, msg);
+        };
+        // Mauvais codes : refusés avec le nombre d'essais, sans entrer dans le Jam.
+        auto r = attempt("0000");
+        QVERIFY(!r.first);
+        QVERIFY(r.second.contains("1 sur 3"));
+        r = attempt("1111");
+        QVERIFY(r.second.contains("2 sur 3"));
+        r = attempt("2222");
+        QVERIFY(r.second.contains("ne répondra plus"));
+        QCOMPARE(hostS.state().members.size(), 1);
+        // Adresse bloquée : même le bon code ne passe plus, et l'hôte ne répond rien.
+        r = attempt("4821");
+        QVERIFY(!r.first);
+        QVERIFY(!r.second.contains("Code"));
+        QCOMPARE(hostS.state().members.size(), 1);
+        // Nouveau Jam : le blocage est levé.
+        QVERIFY(hostS.host("Jam privé 2", "Alice", "4821", 0));
+        QVERIFY(attempt("4821").first);
     }
 
     void pastedSpotifyLinks()

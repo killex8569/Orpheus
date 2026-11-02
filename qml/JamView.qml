@@ -39,6 +39,20 @@ Item {
         background: Rectangle { radius: 8; color: OTheme.panel2; border.color: tf.activeFocus ? OTheme.accent : OTheme.border }
     }
 
+    // Code d'accès : exactement 4 chiffres.
+    component CodeField: Field {
+        implicitWidth: 120
+        maximumLength: 4
+        horizontalAlignment: TextInput.AlignHCenter
+        leftPadding: 12
+        font.pixelSize: 18
+        font.letterSpacing: 6
+        inputMethodHints: Qt.ImhDigitsOnly
+        validator: RegularExpressionValidator { regularExpression: /[0-9]{0,4}/ }
+        placeholderText: "0000"
+        readonly property bool complete: root.jam.isValidCode(text)
+    }
+
     // ---------- Pas de Jam en cours : créer ou rejoindre ----------
     ScrollView {
         id: lobby
@@ -76,13 +90,34 @@ Item {
 
             Card {
                 title: "Créer un Jam"
-                subtitle: "Vous devenez l'hôte. Tout le monde peut ajouter des morceaux, mettre en pause ou passer au suivant, pour tous à la fois."
-                PillButton { text: "Créer un Jam"; iconName: "jam"; primary: true; onClicked: root.jam.create() }
+                subtitle: "Vous devenez l'hôte. Tout le monde peut ajouter des morceaux, mettre en pause ou passer au suivant, pour tous à la fois. "
+                          + "Choisissez un code à 4 chiffres : il sera demandé à vos amis pour entrer."
+                RowLayout {
+                    spacing: 12
+                    Text { text: "Code d'accès"; color: OTheme.text; font.pixelSize: 14 }
+                    CodeField { id: createCode; onAccepted: if (complete) root.jam.create(text) }
+                    PillButton {
+                        text: "Créer un Jam"; iconName: "jam"; primary: true
+                        enabled: createCode.complete
+                        onClicked: root.jam.create(createCode.text)
+                    }
+                }
             }
 
             Card {
                 title: "Rejoindre un Jam"
-                subtitle: root.jam.discovered.length > 0 ? "Jams trouvés sur votre réseau :" : ""
+                subtitle: "Demandez le code à 4 chiffres à l'hôte. Après 3 codes incorrects, le Jam bloque votre appareil."
+
+                RowLayout {
+                    spacing: 12
+                    Text { text: "Code du Jam"; color: OTheme.text; font.pixelSize: 14 }
+                    CodeField { id: joinCode; echoMode: TextInput.PasswordEchoOnEdit }
+                }
+                Text {
+                    visible: root.jam.discovered.length > 0
+                    text: "Jams trouvés sur votre réseau :"
+                    color: OTheme.muted; font.pixelSize: 13; Layout.topMargin: 4
+                }
 
                 RowLayout {
                     visible: root.jam.discovered.length === 0
@@ -117,7 +152,11 @@ Item {
                                     color: OTheme.muted; font.pixelSize: 12
                                 }
                             }
-                            PillButton { text: "Rejoindre"; primary: true; onClicked: root.jam.joinDiscovered(drow.index) }
+                            PillButton {
+                                text: "Rejoindre"; primary: true
+                                enabled: joinCode.complete
+                                onClicked: root.jam.joinDiscovered(drow.index, joinCode.text)
+                            }
                         }
                     }
                 }
@@ -132,9 +171,13 @@ Item {
                         id: addr
                         Layout.preferredWidth: 220
                         placeholderText: "ex. 192.168.1.20"
-                        onAccepted: root.jam.join(text)
+                        onAccepted: if (joinCode.complete) root.jam.join(text, joinCode.text)
                     }
-                    PillButton { text: "Rejoindre"; enabled: addr.text.trim() !== ""; onClicked: root.jam.join(addr.text) }
+                    PillButton {
+                        text: "Rejoindre"
+                        enabled: addr.text.trim() !== "" && joinCode.complete
+                        onClicked: root.jam.join(addr.text, joinCode.text)
+                    }
                 }
             }
             Item { implicitHeight: 10 }
@@ -185,7 +228,8 @@ Item {
                 spacing: 10
                 Icon { iconName: "link"; size: 15; color: OTheme.muted }
                 Text {
-                    text: "Vos amis voient ce Jam dans leur onglet Jam. Sinon, ils peuvent saisir : <b>" + root.jam.address + "</b>"
+                    text: "Code d'accès : <b>" + root.jam.code + "</b> · Vos amis voient ce Jam dans leur onglet Jam. "
+                          + "Sinon, ils peuvent saisir l'adresse : <b>" + root.jam.address + "</b>"
                     textFormat: Text.StyledText
                     color: OTheme.muted; font.pixelSize: 13; wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }

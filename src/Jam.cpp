@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMessageAuthenticationCode>
 #include <QNetworkDatagram>
 #include <QNetworkInterface>
 #include <QRandomGenerator>
@@ -76,6 +77,18 @@ namespace Jam {
 qint64 nowMs()
 {
     return QDateTime::currentMSecsSinceEpoch();
+}
+
+bool isValidCode(const QString &code)
+{
+    static const QRegularExpression re(QStringLiteral("^[0-9]{4}$"));
+    return re.match(code).hasMatch();
+}
+
+QString codeProof(const QString &code, const QString &nonce)
+{
+    return QString::fromLatin1(
+        QMessageAuthenticationCode::hash(nonce.toUtf8(), code.toUtf8(), QCryptographicHash::Sha256).toHex());
 }
 
 bool isValidYtId(const QString &id)
@@ -267,8 +280,13 @@ void JamSession::trackEnded(qint64 itemId)
 
 // ---------- Hôte ----------
 
-bool JamSession::host(const QString &jamName, const QString &myName, quint16 port, QString *error)
+bool JamSession::host(const QString &jamName, const QString &myName, const QString &code, quint16 port, QString *error)
 {
+    if (!isValidCode(code)) {
+        if (error)
+            *error = QStringLiteral("le code doit faire exactement 4 chiffres");
+        return false;
+    }
     if (m_role != None)
         leave();
     m_server = new QTcpServer(this);
@@ -282,6 +300,9 @@ bool JamSession::host(const QString &jamName, const QString &myName, quint16 por
     }
     connect(m_server, &QTcpServer::newConnection, this, &JamSession::onNewConnection);
     m_role = Host;
+    m_code = code;
+    m_failures.clear();
+    m_banned.clear();
     m_myId = 1;
     m_nextMemberId = 2;
     m_nextItemId = 1;
@@ -300,8 +321,22 @@ bool JamSession::host(const QString &jamName, const QString &myName, quint16 por
 void JamSession::onNewConnection()
 {
     while (QTcpSocket *s = m_server->nextPendingConnection()) {
+        const quint32 ip = s->peerAddress().toIPv4Address();
+        // Adresse bloquée (trop de mauvais codes) : coupée sans la moindre réponse.
+        if (m_banned.contains(ip)) {
+            s->abort();
+            s->deleteLater();
+            continue;
+        }
         s->setSocketOption(QAbstractSocket::LowDelayOption, 1);
-        m_peers.insert(s, Peer{s, 0, {}, {}});
+        Peer peer;
+        peer.socket = s;
+        peer.ip = ip;
+        peer.nonce = QString::number(QRandomGenerator::system()->generate64(), 16)
+                     + QString::number(QRandomGenerator::system()->generate64(), 16);
+        m_peers.insert(s, peer);
+        // Défi : le client prouve qu'il connaît le code sans l'envoyer.
+        s->write(encode({{"type", "challenge"}, {"v", ProtocolVersion}, {"nonce", peer.nonce}}));
         connect(s, &QTcpSocket::readyRead, this, [this, s] { onPeerData(s); });
         connect(s, &QTcpSocket::disconnected, this, [this, s] { dropPeer(s); });
         // Pas de présentation dans les 5 s : ce n'est pas un client Orpheus.
@@ -327,7 +362,7 @@ void JamSession::onPeerData(QTcpSocket *s)
             return;
         Peer &peer = m_peers[s];
         const QString type = msg.value("type").toString();
-        if (type == "ping") {
+        if (type == "ping" && peer.memberId > 0) {
             s->write(encode({{"type", "pong"}, {"t", msg.value("t")}, {"h", nowMs()}}));
         } else if (type == "hello" && peer.memberId == 0) {
             if (msg.value("v").toInt() != ProtocolVersion) {
@@ -335,6 +370,11 @@ void JamSession::onPeerData(QTcpSocket *s)
                 s->disconnectFromHost();
                 return;
             }
+            if (msg.value("proof").toString() != codeProof(m_code, peer.nonce)) {
+                rejectCode(s);
+                return;
+            }
+            m_failures.remove(peer.ip);
             if (m_state.members.size() >= MaxMembers) {
                 s->write(encode({{"type", "error"}, {"text", "Ce Jam est complet."}}));
                 s->disconnectFromHost();
@@ -354,6 +394,31 @@ void JamSession::onPeerData(QTcpSocket *s)
             handleRequest(peer.memberId, msg);
         }
     }
+}
+
+void JamSession::rejectCode(QTcpSocket *s)
+{
+    const quint32 ip = m_peers.value(s).ip;
+    const int failures = ++m_failures[ip];
+    if (failures >= MaxCodeAttempts) {
+        m_banned.insert(ip);
+        s->write(encode({{"type", "error"}, {"text", "Trop de codes incorrects : ce Jam ne répondra plus à cet appareil."}}));
+        // Autres connexions en cours depuis la même adresse : coupées sans réponse.
+        QList<QTcpSocket *> others;
+        for (auto it = m_peers.cbegin(); it != m_peers.cend(); ++it)
+            if (it.key() != s && it->ip == ip && it->memberId == 0)
+                others << it.key();
+        for (QTcpSocket *o : std::as_const(others)) {
+            m_peers.remove(o);
+            o->disconnect(this);
+            o->abort();
+            o->deleteLater();
+        }
+    } else {
+        s->write(encode({{"type", "error"},
+                         {"text", QStringLiteral("Code incorrect (essai %1 sur %2)").arg(failures).arg(MaxCodeAttempts)}}));
+    }
+    s->disconnectFromHost();
 }
 
 void JamSession::dropPeer(QTcpSocket *s, const QString &reason)
@@ -624,8 +689,16 @@ void JamSession::leave()
         m_beaconTimer.stop();
         m_waitTimer.stop();
         m_hostTick.stop();
+        // Socket des annonces : fermé avec le Jam (sauf s'il sert à chercher des Jams).
+        if (m_discovery && !m_expireTimer.isActive()) {
+            delete m_discovery;
+            m_discovery = nullptr;
+        }
         m_role = None;
         m_myId = 0;
+        m_code.clear();
+        m_failures.clear();
+        m_banned.clear();
         m_state = State();
         emit roleChanged();
         emit stateChanged();
@@ -636,7 +709,7 @@ void JamSession::leave()
 
 // ---------- Client ----------
 
-void JamSession::join(const QHostAddress &address, quint16 port, const QString &myName)
+void JamSession::join(const QHostAddress &address, quint16 port, const QString &myName, const QString &code)
 {
     if (m_role != None)
         leave();
@@ -647,14 +720,11 @@ void JamSession::join(const QHostAddress &address, quint16 port, const QString &
     m_buffer.clear();
     m_pingsSent = 0;
     m_hostAddress = address.toString();
+    m_joinName = clip(myName, 40);
+    m_joinCode = code;
     m_socket = new QTcpSocket(this);
     m_socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
-    connect(m_socket, &QTcpSocket::connected, this, [this, name = clip(myName, 40)] {
-        sendToHost({{"type", "hello"}, {"v", ProtocolVersion}, {"name", name}});
-        // Synchronisation d'horloge : quelques mesures rapprochées, puis régulières.
-        sendPing();
-        m_pingTimer.start(250);
-    });
+
     connect(m_socket, &QTcpSocket::readyRead, this, &JamSession::onClientData);
     connect(m_socket, &QTcpSocket::disconnected, this, [this] {
         endSession(connecting() ? QStringLiteral("Connexion refusée par l'hôte") : QStringLiteral("Connexion au Jam perdue"), true);
@@ -696,9 +766,22 @@ void JamSession::onClientData()
         const QString type = msg.value("type").toString();
         if (type == "pong") {
             m_clock.addSample(msg.value("t").toInteger(), msg.value("h").toInteger(), nowMs());
+        } else if (type == "challenge") {
+            if (msg.value("v").toInt() != ProtocolVersion) {
+                endSession(QStringLiteral("Version d'Orpheus différente de celle de l'hôte : mettez-la à jour."), true);
+                return;
+            }
+            sendToHost({{"type", "hello"},
+                        {"v", ProtocolVersion},
+                        {"name", m_joinName},
+                        {"proof", codeProof(m_joinCode, msg.value("nonce").toString())}});
         } else if (type == "welcome") {
             m_myId = msg.value("you").toInt();
             m_connectTimer.stop();
+            // Synchronisation d'horloge : quelques mesures rapprochées, puis régulières.
+            m_pingsSent = 0;
+            sendPing();
+            m_pingTimer.start(250);
             emit roleChanged();
         } else if (type == "state") {
             m_state = State::fromJson(msg);

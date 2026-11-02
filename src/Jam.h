@@ -6,6 +6,7 @@
 #include <QList>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QTimer>
 #include <optional>
 
@@ -24,13 +25,18 @@ namespace Jam {
 
 constexpr quint16 DiscoveryPort = 47800;
 constexpr quint16 SessionPort = 47801;
-constexpr int ProtocolVersion = 1;
+constexpr int ProtocolVersion = 2;  // 2 : code d'accès obligatoire
 constexpr int MaxItems = 1000;
 constexpr int MaxMembers = 32;
+constexpr int MaxCodeAttempts = 3;  // au-delà, l'adresse IP est bloquée jusqu'à la fin du Jam
 
 qint64 nowMs();
 // Identifiant de vidéo YouTube strict : il sert à nommer des fichiers.
 bool isValidYtId(const QString &id);
+// Code d'accès : exactement 4 chiffres.
+bool isValidCode(const QString &code);
+// Preuve de connaissance du code, sans l'envoyer : HMAC-SHA256(code, défi de l'hôte).
+QString codeProof(const QString &code, const QString &nonce);
 
 struct Item {
     qint64 id = 0;  // attribué par l'hôte
@@ -101,9 +107,10 @@ public:
     explicit JamSession(QObject *parent = nullptr);
     ~JamSession() override;
 
-    // Crée un Jam ; `port` 0 = port libre au hasard.
-    bool host(const QString &jamName, const QString &myName, quint16 port = Jam::SessionPort, QString *error = nullptr);
-    void join(const QHostAddress &address, quint16 port, const QString &myName);
+    // Crée un Jam protégé par `code` (4 chiffres) ; `port` 0 = port libre au hasard.
+    bool host(const QString &jamName, const QString &myName, const QString &code, quint16 port = Jam::SessionPort,
+              QString *error = nullptr);
+    void join(const QHostAddress &address, quint16 port, const QString &myName, const QString &code);
     void leave();
 
     Role role() const { return m_role; }
@@ -112,6 +119,8 @@ public:
     int myId() const { return m_myId; }
     quint16 port() const;
     QString hostAddress() const { return m_hostAddress; }
+    // Code d'accès (hôte uniquement).
+    QString code() const { return m_role == Host ? m_code : QString(); }
     // Horloge de l'hôte estimée localement (ms).
     qint64 hostNow() const;
     qint64 clockRtt() const { return m_role == Host ? 0 : m_clock.rtt(); }
@@ -147,10 +156,13 @@ private:
         int memberId = 0;
         QString name;
         QByteArray buffer;
+        QString nonce;    // défi envoyé à la connexion
+        quint32 ip = 0;   // adresse IPv4 du pair
     };
 
     // Hôte
     void onNewConnection();
+    void rejectCode(QTcpSocket *s);
     void onPeerData(QTcpSocket *s);
     void dropPeer(QTcpSocket *s, const QString &reason = {});
     void handleRequest(int memberId, const QJsonObject &msg);
@@ -185,6 +197,9 @@ private:
     QTcpServer *m_server = nullptr;
     QHash<QTcpSocket *, Peer> m_peers;
     int m_nextMemberId = 1;
+    QString m_code;
+    QHash<quint32, int> m_failures;  // mauvais codes par adresse IPv4
+    QSet<quint32> m_banned;
     qint64 m_nextItemId = 1;
     QTimer m_beaconTimer, m_waitTimer, m_hostTick;
     // Client
@@ -194,6 +209,7 @@ private:
     QTimer m_pingTimer, m_connectTimer;
     int m_pingsSent = 0;
     QString m_hostAddress;
+    QString m_joinName, m_joinCode;
     // Découverte
     QUdpSocket *m_discovery = nullptr;
     QTimer m_expireTimer;

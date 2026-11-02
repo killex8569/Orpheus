@@ -87,18 +87,22 @@ QVariantList JamController::discovered() const
 
 // ---------- Session ----------
 
-void JamController::create()
+void JamController::create(const QString &code)
 {
     const QString me = myName().isEmpty() ? QStringLiteral("Hôte") : myName();
     QString err;
-    if (!m_session.host(QStringLiteral("Jam de %1").arg(me), me, Jam::SessionPort, &err))
+    if (!m_session.host(QStringLiteral("Jam de %1").arg(me), me, code.trimmed(), Jam::SessionPort, &err))
         emit toast(QStringLiteral("Impossible de créer le Jam : %1").arg(err), true);
     else
         emit toast(QStringLiteral("Jam créé : vos amis sur le même réseau peuvent le rejoindre"), false);
 }
 
-void JamController::join(const QString &text)
+void JamController::join(const QString &text, const QString &code)
 {
+    if (!Jam::isValidCode(code.trimmed())) {
+        emit toast(QStringLiteral("Saisissez le code du Jam : 4 chiffres"), true);
+        return;
+    }
     QString host = text.trimmed();
     quint16 port = Jam::SessionPort;
     if (const int colon = host.lastIndexOf(':'); colon > 0 && host.count(':') == 1) {
@@ -116,14 +120,18 @@ void JamController::join(const QString &text)
         emit toast(QStringLiteral("Adresse invalide : saisissez l'adresse IP affichée chez l'hôte (ex. 192.168.1.20)"), true);
         return;
     }
-    m_session.join(addr, port, myName());
+    m_session.join(addr, port, myName(), code.trimmed());
 }
 
-void JamController::joinDiscovered(int index)
+void JamController::joinDiscovered(int index, const QString &code)
 {
+    if (!Jam::isValidCode(code.trimmed())) {
+        emit toast(QStringLiteral("Saisissez le code du Jam : 4 chiffres"), true);
+        return;
+    }
     const auto &list = m_session.discovered();
     if (index >= 0 && index < list.size())
-        m_session.join(list[index].address, list[index].port, myName());
+        m_session.join(list[index].address, list[index].port, myName(), code.trimmed());
 }
 
 void JamController::leave()

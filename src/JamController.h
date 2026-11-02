@@ -22,6 +22,7 @@ class JamController : public QObject {
     Q_PROPERTY(QVariantList members READ members NOTIFY changed)
     Q_PROPERTY(int currentIndex READ currentIndex NOTIFY changed)
     Q_PROPERTY(QString address READ address NOTIFY changed)
+    Q_PROPERTY(QString code READ code NOTIFY changed)  // code d'accès (hôte)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
     Q_PROPERTY(QVariantList discovered READ discovered NOTIFY discoveredChanged)
     Q_PROPERTY(TrackModel *queue READ queue CONSTANT)
@@ -38,6 +39,7 @@ public:
     QVariantList members() const;
     int currentIndex() const { return m_session.state().current() ? m_session.state().index : -1; }
     QString address() const;
+    QString code() const { return m_session.code(); }
     QString statusText() const { return m_status; }
     QVariantList discovered() const;
     TrackModel *queue() { return &m_queue; }
@@ -46,10 +48,12 @@ public:
     int latencyMs() const { return m_latencyMs; }
     void setLatencyMs(int ms);
 
-    Q_INVOKABLE void create();
+    // `code` : 4 chiffres, demandés à toute personne qui rejoint.
+    Q_INVOKABLE void create(const QString &code);
     // « 192.168.1.20 » ou « 192.168.1.20:47801 ».
-    Q_INVOKABLE void join(const QString &address);
-    Q_INVOKABLE void joinDiscovered(int index);
+    Q_INVOKABLE void join(const QString &address, const QString &code);
+    Q_INVOKABLE void joinDiscovered(int index, const QString &code);
+    Q_INVOKABLE bool isValidCode(const QString &code) const { return Jam::isValidCode(code); }
     Q_INVOKABLE void leave();
     Q_INVOKABLE void setDiscovering(bool on) { m_session.setDiscovering(on); }
 
