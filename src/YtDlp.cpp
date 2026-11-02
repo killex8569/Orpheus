@@ -83,6 +83,19 @@ QString ytdlpError(const QString &stderrText)
     return line.left(300);
 }
 
+// Copie gérée : binaire officiel autonome propre à chaque système (pas besoin de Python
+// sous Windows et macOS). Sous Linux, l'archive « yt-dlp » s'exécute avec python3.
+#if defined(Q_OS_WIN)
+static const QString kManagedName = QStringLiteral("yt-dlp.exe");
+static const QString kManagedUrl = QStringLiteral("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe");
+#elif defined(Q_OS_MACOS)
+static const QString kManagedName = QStringLiteral("yt-dlp");
+static const QString kManagedUrl = QStringLiteral("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos");
+#else
+static const QString kManagedName = QStringLiteral("yt-dlp");
+static const QString kManagedUrl = QStringLiteral("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp");
+#endif
+
 YtDlp::YtDlp(const QString &managedDir, QObject *parent) : QObject(parent), m_managedDir(managedDir)
 {
     redetect();
@@ -101,7 +114,7 @@ void YtDlp::redetect()
         m_candidates << path;
     };
     // Priorité à la copie gérée par Orpheus (mise à jour automatiquement).
-    add(m_managedDir + "/yt-dlp");
+    add(m_managedDir + "/" + kManagedName);
     add(QStandardPaths::findExecutable("yt-dlp"));
     const QString home = QDir::homePath();
     for (const QString &dir : {home + "/.local/bin", QStringLiteral("/usr/local/bin"), QStringLiteral("/usr/bin")})
@@ -165,7 +178,7 @@ void YtDlp::selectNewest(std::function<void(QString)> cb)
 
 bool YtDlp::isManaged() const
 {
-    return m_bin == m_managedDir + "/yt-dlp";
+    return m_bin == m_managedDir + "/" + kManagedName;
 }
 
 QStringList YtDlp::baseArgs() const
@@ -440,7 +453,7 @@ QProcess *YtDlp::download(const QString &ytId, const QString &libraryDir, const 
 
 void YtDlp::updateManaged(std::function<void(QString, bool)> cb)
 {
-    const QString target = m_managedDir + "/yt-dlp";
+    const QString target = m_managedDir + "/" + kManagedName;
     if (QFileInfo(target).isExecutable()) {
         // Copie déjà installée : mise à jour par yt-dlp lui-même.
         auto *p = new QProcess(this);
@@ -453,7 +466,7 @@ void YtDlp::updateManaged(std::function<void(QString, bool)> cb)
         p->start(target, {"-U"});
         return;
     }
-    // Première installation : binaire officiel (nécessite python3, présent sur le système).
+    // Première installation : binaire officiel (curl est fourni avec Linux, macOS et Windows 10+).
     auto *p = new QProcess(this);
     connect(p, &QProcess::finished, this, [this, p, cb, target](int code) {
         p->deleteLater();
@@ -466,5 +479,5 @@ void YtDlp::updateManaged(std::function<void(QString, bool)> cb)
         selectNewest([cb](QString v) { cb(QStringLiteral("yt-dlp %1 installé").arg(v), true); });
     });
     p->start("curl", {"-fsSL", "--max-time", "120", "-o", target,
-                      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"});
+                      kManagedUrl});
 }

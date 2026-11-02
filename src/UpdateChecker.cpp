@@ -57,6 +57,10 @@ QString UpdateChecker::lastCheckText() const
 
 QString UpdateChecker::updateCommand() const
 {
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+    // Installé par un installeur : la mise à jour passe par le nouvel installeur de la release.
+    return {};
+#endif
     const QString src = QStringLiteral(ORPHEUS_SOURCE_DIR);
     if (!src.isEmpty() && QDir(src + "/.git").exists())
         return QStringLiteral("cd \"%1\" && git pull && ./install.sh").arg(src);

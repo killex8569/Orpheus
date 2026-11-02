@@ -10,7 +10,12 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Network Test DBus)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Network Test)
+# MPRIS (contrôle depuis le bureau) passe par D-Bus : Linux uniquement.
+if(UNIX AND NOT APPLE)
+    set(ORPHEUS_MPRIS ON)
+    find_package(Qt6 REQUIRED COMPONENTS DBus)
+endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 
@@ -46,11 +51,46 @@ qt_add_executable(orpheus
     src/Player.cpp
     src/TrackModel.cpp
     src/Backend.cpp
-    src/Mpris.cpp
     src/JamController.cpp
 )
-target_link_libraries(orpheus PRIVATE orpheus_core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::DBus PkgConfig::MPV)
+target_link_libraries(orpheus PRIVATE orpheus_core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 PkgConfig::MPV)
 target_compile_options(orpheus PRIVATE -Wall -Wextra)
+if(ORPHEUS_MPRIS)
+    target_sources(orpheus PRIVATE src/Mpris.cpp)
+    target_link_libraries(orpheus PRIVATE Qt6::DBus)
+    target_compile_definitions(orpheus PRIVATE ORPHEUS_MPRIS)
+endif()
+
+if(WIN32)
+    # Application graphique (pas de console) ; icône de l'exécutable.
+    set_target_properties(orpheus PROPERTIES WIN32_EXECUTABLE ON)
+    target_sources(orpheus PRIVATE packaging/windows/orpheus.rc)
+elseif(APPLE)
+    # Orpheus.app ; l'icône .icns est produite depuis le SVG (rsvg-convert + iconutil).
+    find_program(RSVG_CONVERT rsvg-convert REQUIRED)
+    find_program(ICONUTIL iconutil REQUIRED)
+    set(ICNS ${CMAKE_CURRENT_BINARY_DIR}/orpheus.icns)
+    set(ICONSET ${CMAKE_CURRENT_BINARY_DIR}/orpheus.iconset)
+    set(ICON_COMMANDS COMMAND ${CMAKE_COMMAND} -E make_directory ${ICONSET})
+    foreach(s 16 32 128 256 512)
+        math(EXPR s2 "${s} * 2")
+        list(APPEND ICON_COMMANDS
+            COMMAND ${RSVG_CONVERT} -w ${s} -h ${s} ${CMAKE_CURRENT_SOURCE_DIR}/icons/orpheus.svg -o ${ICONSET}/icon_${s}x${s}.png
+            COMMAND ${RSVG_CONVERT} -w ${s2} -h ${s2} ${CMAKE_CURRENT_SOURCE_DIR}/icons/orpheus.svg -o ${ICONSET}/icon_${s}x${s}@2x.png)
+    endforeach()
+    add_custom_command(OUTPUT ${ICNS} ${ICON_COMMANDS}
+        COMMAND ${ICONUTIL} -c icns ${ICONSET} -o ${ICNS}
+        DEPENDS icons/orpheus.svg VERBATIM)
+    set_source_files_properties(${ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(orpheus PRIVATE ${ICNS})
+    set_target_properties(orpheus PROPERTIES
+        MACOSX_BUNDLE ON
+        OUTPUT_NAME Orpheus
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/Info.plist.in
+        MACOSX_BUNDLE_GUI_IDENTIFIER io.github.killex8569.orpheus
+        MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+        MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION})
+endif()
 
 # Doit précéder qt_add_qml_module. Les fichiers QML sont placés à la racine du module
 # (sinon l'import implicite du dossier qml/ masquerait le singleton OTheme).
@@ -89,7 +129,7 @@ qt_add_qml_module(orpheus
     RESOURCES ${ICONS}
 )
 
-install(TARGETS orpheus RUNTIME DESTINATION bin)
+install(TARGETS orpheus RUNTIME DESTINATION bin BUNDLE DESTINATION .)
 
 # Tests unitaires du cœur.
 enable_testing()

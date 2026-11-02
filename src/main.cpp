@@ -1,5 +1,6 @@
 // Orpheus — lecteur de musique de bureau avec cache local intelligent.
 
+#include <QDir>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLocalServer>
@@ -12,11 +13,26 @@
 #include <clocale>
 
 #include "Backend.h"
+#ifdef ORPHEUS_MPRIS
 #include "Mpris.h"
+#endif
 
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+    // Installeurs Windows/macOS : ffmpeg et deno sont livrés à côté de l'exécutable.
+    // Une application lancée depuis le Finder ne voit pas non plus le PATH du terminal
+    // (Homebrew). yt-dlp, lancé par Orpheus, hérite de ce PATH.
+    {
+        QStringList dirs{QDir::toNativeSeparators(QCoreApplication::applicationDirPath())};
+#ifdef Q_OS_MACOS
+        dirs << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
+#endif
+        dirs << qEnvironmentVariable("PATH");
+        qputenv("PATH", dirs.join(QDir::listSeparator()).toLocal8Bit());
+    }
+#endif
     app.setApplicationName("orpheus");
     app.setApplicationDisplayName("Orpheus");
     app.setDesktopFileName("orpheus");
@@ -58,8 +74,13 @@ int main(int argc, char *argv[])
             }
     };
     // MPRIS : contrôle depuis le bureau (widget média, touches multimédia globales…).
+#ifdef ORPHEUS_MPRIS
     Mpris mpris(&backend, raiseWindow);
     const bool mprisActive = mpris.registerService();
+#else
+    // Windows/macOS : pas de MPRIS, les touches multimédia sont gérées par la fenêtre.
+    const bool mprisActive = false;
+#endif
     engine.rootContext()->setContextProperty("backend", &backend);
     // Avec MPRIS, les touches multimédia passent par le bureau : pas de raccourcis
     // en double dans la fenêtre.

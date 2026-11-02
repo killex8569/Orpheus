@@ -1,0 +1,3 @@
+// Icône de orpheus.exe (Explorateur, barre des tâches, raccourcis).
+// orpheus.ico est produit depuis icons/orpheus.svg par packaging/windows/make-ico.py.
+IDI_ICON1 ICON "orpheus.ico"

@@ -7,11 +7,26 @@ Native music player for Linux, in **C++ / Qt 6 (QML)**, with playback through **
 ```bash
 ./install.sh      # compiles, runs the tests, installs into ~/.local/bin + applications menu
 orpheus
+./update.sh       # git pull, then rebuild and reinstall if anything changed (--force to always reinstall)
+./uninstall.sh    # removes the program, icon and menu entry; your music and playlists are kept
 ```
 
-Dependencies (already present on this machine): Qt 6.5+ (`qt6-qtbase-devel`, `qt6-qtdeclarative-devel`, `qt6-qtsvg`), `mpv-devel`, `cmake`, `ninja`, `g++`, and at runtime `yt-dlp` + `deno` (JavaScript engine required by YouTube).
+Useful options: `install.sh --deps` installs the dependencies with the distribution's package manager (dnf, apt, pacman, zypper; uses sudo), `--no-tests` skips the unit tests, `--yes` answers yes to every question. `uninstall.sh --purge` also deletes the data (`~/.local/share/orpheus`), `--clean` deletes `build/`. Every script has `--help`.
+
+Dependencies: Qt 6.5+ (`qt6-qtbase-devel`, `qt6-qtdeclarative-devel`, `qt6-qtsvg`), `mpv-devel`, `cmake`, `ninja`, `g++`, and at runtime `yt-dlp`, `ffmpeg` and `deno` (JavaScript engine required by YouTube).
 
 Manual build: `cmake -S . -B build -G Ninja && cmake --build build && ./build/orpheus`
+
+### Windows and macOS
+
+Download the installer from the [latest release](https://github.com/killex8569/Orpheus/releases/latest). Everything is included (Qt, libmpv, ffmpeg, deno); yt-dlp is downloaded by Orpheus on first launch and kept up to date.
+
+- **Windows 10/11 (x64)**: `Orpheus-x.y.z-windows-x64-setup.exe`. No administrator rights needed; installs into `%LOCALAPPDATA%\Programs\Orpheus`. Uninstall from "Installed apps". Windows SmartScreen may warn about an unknown publisher: "More info" → "Run anyway".
+- **macOS 13+ (Apple Silicon)**: `Orpheus-x.y.z-macos-arm64.dmg`, then drag Orpheus into Applications. The app is not notarized by Apple: on first launch, open it, then go to System Settings → Privacy & Security → "Open Anyway".
+
+To update, run the new installer: your tracks and playlists are kept (`%LOCALAPPDATA%\orpheus` on Windows, `~/Library/Application Support/orpheus` on macOS). No MPRIS outside Linux; media keys work while the window has focus.
+
+The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Setup on Windows, Homebrew + macdeployqt on macOS). Pushing a `v*` tag attaches them to the release.
 
 ## Features
 

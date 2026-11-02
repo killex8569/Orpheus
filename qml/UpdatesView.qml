@@ -121,8 +121,19 @@ ScrollView {
             }
         }
 
+        // Windows / macOS : pas de commande, on réinstalle avec l'installeur de la release.
         Card {
-            visible: scroll.up.updateAvailable
+            visible: scroll.up.updateAvailable && scroll.up.updateCommand === ""
+            title: "Installer la mise à jour"
+            subtitle: "Téléchargez l'installeur de la nouvelle version (fichier .exe pour Windows, .dmg pour macOS) dans la release, puis lancez-le : il remplace la version actuelle sans toucher à vos morceaux ni à vos playlists. Fermez Orpheus avant."
+            PillButton {
+                text: "Télécharger l'installeur"; iconName: "download"
+                onClicked: Qt.openUrlExternally(scroll.up.releaseUrl)
+            }
+        }
+
+        Card {
+            visible: scroll.up.updateAvailable && scroll.up.updateCommand !== ""
             title: "Installer la mise à jour"
             subtitle: "Dans un terminal, lancez la commande ci-dessous (elle récupère la nouvelle version, la compile et l'installe), puis relancez Orpheus."
             RowLayout {

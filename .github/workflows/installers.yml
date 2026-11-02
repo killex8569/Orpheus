@@ -1,0 +1,219 @@
+# Installeurs Windows (.exe) et macOS (.dmg).
+#
+# - Tag « v* » poussé : construit les installeurs et les ajoute à la release du tag
+#   (créée si elle n'existe pas encore).
+# - Push touchant au code ou au packaging, ou lancement manuel (onglet Actions) : construit
+#   et teste seulement ; les installeurs sont téléchargeables dans les artefacts du run.
+#
+# Chaque installeur est testé sur une machine propre : installation, démarrage d'Orpheus
+# sans les outils de compilation (capture d'écran en artefact), puis désinstallation.
+name: Installeurs
+
+on:
+  push:
+    tags: ['v*']
+    branches: ['**']
+    paths:
+      - 'src/**'
+      - 'qml/**'
+      - 'icons/**'
+      - 'CMakeLists.txt'
+      - 'packaging/**'
+      - '.github/workflows/installers.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows x64 (.exe)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: unzip
+          pacboy: >-
+            gcc:p cmake:p ninja:p pkgconf:p
+            qt6-base:p qt6-declarative:p qt6-svg:p qt6-tools:p
+            mpv:p ffmpeg:p
+
+      - name: Version
+        id: version
+        run: echo "version=$(sed -n 's/^project(orpheus VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Compilation et tests
+        run: |
+          cmake -S . -B build -G Ninja -Wno-dev -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          ./build/orpheus_tests.exe -silent
+
+      - name: deno
+        run: |
+          curl -fsSL -o deno.zip https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip
+          unzip -o deno.zip -d build/deno
+
+      - name: Dossier autonome
+        run: bash packaging/windows/deploy.sh build build/deploy build/deno/deno.exe
+
+      - name: Installeur (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Installation d'Inno Setup impossible" }
+          }
+          & $iscc /Qp "/DAppVersion=${{ steps.version.outputs.version }}" "/DSourceDir=$PWD\build\deploy" "/DOutputDir=$PWD\dist" packaging\windows\orpheus.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC a échoué ($LASTEXITCODE)" }
+          Get-ChildItem dist
+
+      - name: Test (installation, démarrage, désinstallation)
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist\*.exe).FullName
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log; throw "Installation : code $($p.ExitCode)" }
+          $app = "$env:LOCALAPPDATA\Programs\Orpheus"
+          if (-not (Test-Path "$app\orpheus.exe")) { Get-Content install.log; throw "orpheus.exe absent de $app" }
+
+          # PATH réduit au système : tout doit venir du dossier installé, pas de MSYS2.
+          $env:PATH = "$env:SystemRoot\system32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          & "$app\ffmpeg.exe" -hide_banner -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) { throw "ffmpeg ne démarre pas" }
+          & "$app\deno.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "deno ne démarre pas" }
+
+          $env:ORPHEUS_HOME = "$env:RUNNER_TEMP\orpheus-home"
+          $env:ORPHEUS_SCREENSHOT = "$PWD\screenshot-windows.png"
+          $env:ORPHEUS_SCREENSHOT_DELAY = '20000'
+          $env:QT_FORCE_STDERR_LOGGING = '1'
+          $run = Start-Process "$app\orpheus.exe" -PassThru -RedirectStandardError orpheus.log
+          if (-not $run.WaitForExit(120000)) { $run.Kill(); Get-Content orpheus.log; throw "Orpheus ne s'est pas fermé" }
+          Get-Content orpheus.log
+          if ($run.ExitCode -ne 0) { throw "Orpheus s'est arrêté avec le code $($run.ExitCode)" }
+          if (Test-Path $env:ORPHEUS_SCREENSHOT) { "Capture d'écran OK" } else { "::warning::pas de capture d'écran" }
+          # yt-dlp géré par Orpheus : téléchargé au premier lancement.
+          $yt = "$env:ORPHEUS_HOME\bin\yt-dlp.exe"
+          if (Test-Path $yt) { & $yt --version } else { "::warning::yt-dlp n'a pas été téléchargé par Orpheus" }
+
+          $u = Start-Process "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          Start-Sleep -Seconds 5   # le désinstalleur se relance depuis un dossier temporaire
+          if (Test-Path "$app\orpheus.exe") { throw "Désinstallation incomplète" }
+          "Désinstallation OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orpheus-windows
+          path: dist/*.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-windows
+          path: |
+            screenshot-windows.png
+            orpheus.log
+            install.log
+          if-no-files-found: ignore
+
+  macos:
+    name: macOS Apple Silicon (.dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances (Homebrew)
+        run: brew install qt mpv ninja pkgconf librsvg
+
+      - name: Version
+        id: version
+        run: echo "version=$(sed -n 's/^project(orpheus VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Compilation et tests
+        run: |
+          cmake -S . -B build -G Ninja -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+          cmake --build build
+          ./build/orpheus_tests -silent
+
+      - name: deno
+        run: |
+          curl -fsSL -o deno.zip https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip
+          unzip -o deno.zip -d build/deno
+
+      - name: Image disque
+        run: bash packaging/macos/make-dmg.sh build dist build/deno/deno "${{ steps.version.outputs.version }}"
+
+      - name: Test (installation, démarrage)
+        run: |
+          dmg="$(ls dist/*.dmg)"
+          mnt="$(hdiutil attach -nobrowse -readonly "$dmg" | tail -1 | cut -f3)"
+          rm -rf "$RUNNER_TEMP/Orpheus.app"
+          cp -R "$mnt/Orpheus.app" "$RUNNER_TEMP/Orpheus.app"
+          hdiutil detach "$mnt"
+          app="$RUNNER_TEMP/Orpheus.app"
+
+          # Homebrew masqué : tout doit venir de l'application.
+          sudo mv /opt/homebrew /opt/homebrew.off
+          trap 'sudo mv /opt/homebrew.off /opt/homebrew' EXIT
+          "$app/Contents/MacOS/ffmpeg" -hide_banner -version | head -1
+          "$app/Contents/MacOS/deno" --version
+
+          export ORPHEUS_HOME="$RUNNER_TEMP/orpheus-home"
+          export ORPHEUS_SCREENSHOT="$PWD/screenshot-macos.png"
+          export ORPHEUS_SCREENSHOT_DELAY=20000
+          export QT_FORCE_STDERR_LOGGING=1
+          # perl alarm : coupe Orpheus s'il ne se ferme pas tout seul (pas de « timeout » sur macOS).
+          perl -e 'alarm shift; exec @ARGV' 120 "$app/Contents/MacOS/Orpheus" 2> orpheus.log || { cat orpheus.log; exit 1; }
+          cat orpheus.log
+          [[ -f $ORPHEUS_SCREENSHOT ]] && echo "Capture d'écran OK" || echo "::warning::pas de capture d'écran"
+          if [[ -x $ORPHEUS_HOME/bin/yt-dlp ]]; then "$ORPHEUS_HOME/bin/yt-dlp" --version; else echo "::warning::yt-dlp n'a pas été téléchargé par Orpheus"; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orpheus-macos
+          path: dist/*.dmg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-macos
+          path: |
+            screenshot-macos.png
+            orpheus.log
+          if-no-files-found: ignore
+
+  release:
+    name: Ajout à la release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: orpheus-*
+          merge-multiple: true
+          path: dist
+      - name: Publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -l dist
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "Orpheus ${TAG#v}" --generate-notes
+          fi
