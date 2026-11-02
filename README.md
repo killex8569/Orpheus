@@ -22,7 +22,7 @@ Manual build: `cmake -S . -B build -G Ninja && cmake --build build && ./build/or
 Download the installer from the [latest release](https://github.com/killex8569/Orpheus/releases/latest). Everything is included (Qt, libmpv, ffmpeg, deno); yt-dlp is downloaded by Orpheus on first launch and kept up to date.
 
 - **Windows 10/11 (x64)**: `Orpheus-x.y.z-windows-x64-setup.exe`. No administrator rights needed; installs into `%LOCALAPPDATA%\Programs\Orpheus`. Uninstall from "Installed apps". Windows SmartScreen may warn about an unknown publisher: "More info" → "Run anyway".
-- **macOS 13+ (Apple Silicon)**: `Orpheus-x.y.z-macos-arm64.dmg`, then drag Orpheus into Applications. The app is not notarized by Apple: on first launch, open it, then go to System Settings → Privacy & Security → "Open Anyway".
+- **macOS 15+ (Apple Silicon)**: `Orpheus-x.y.z-macos-arm64.dmg`, then drag Orpheus into Applications. The app is not notarized by Apple: on first launch, open it, then go to System Settings → Privacy & Security → "Open Anyway".
 
 To update, run the new installer: your tracks and playlists are kept (`%LOCALAPPDATA%\orpheus` on Windows, `~/Library/Application Support/orpheus` on macOS). No MPRIS outside Linux; media keys work while the window has focus.
 

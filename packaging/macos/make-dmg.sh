@@ -21,24 +21,35 @@ cp "$(brew --prefix ffmpeg)/bin/ffmpeg" "$(brew --prefix ffmpeg)/bin/ffprobe" "$
 cp "$DENO" "$MACOS/deno"
 chmod u+w,a+x "$MACOS"/*
 
+# Qt officiel (QT_ROOT_DIR, installé par install-qt-action) : le Qt de Homebrew, découpé en
+# plusieurs paquets, laisse des chemins absolus que macdeployqt ne corrige pas.
+QT_DIR="${QT_ROOT_DIR:?QT_ROOT_DIR doit pointer vers le Qt officiel}"
+
 # Qt, libmpv et toutes les bibliothèques Homebrew (y compris celles de ffmpeg) vont dans
 # Contents/Frameworks, avec des chemins relatifs à l'application.
-"$(brew --prefix qt)/bin/macdeployqt" "$APP" \
+"$QT_DIR/bin/macdeployqt" "$APP" \
     -qmldir="$ROOT/qml" \
     -executable="$MACOS/ffmpeg" \
     -executable="$MACOS/ffprobe" \
     -always-overwrite
 
-# Vérification : plus aucune référence à Homebrew, sinon l'app ne marcherait que sur ce Mac.
+# Les bibliothèques Homebrew sont compilées pour le macOS de la machine de compilation :
+# c'est donc la version minimale requise.
+min_macos="$(sw_vers -productVersion | cut -d. -f1).0"
+/usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $min_macos" "$APP/Contents/Info.plist"
+echo "macOS minimum : $min_macos"
+
+# Vérification : plus aucune référence à Homebrew ni au Qt de compilation, sinon l'app
+# ne marcherait que sur ce Mac.
 bad=0
 while IFS= read -r -d '' f; do
     file -b "$f" | grep -q 'Mach-O' || continue
-    if otool -L "$f" | tail -n +2 | grep -E '/(opt/homebrew|usr/local)/' ; then
+    if otool -L "$f" | tail -n +2 | grep -E "/(opt/homebrew|usr/local)/|$QT_DIR" ; then
         echo "  ↳ dans $f" >&2
         bad=1
     fi
 done < <(find "$APP" -type f -print0)
-[[ $bad == 0 ]] || { echo "Des bibliothèques Homebrew sont encore référencées." >&2; exit 1; }
+[[ $bad == 0 ]] || { echo "Des bibliothèques extérieures à l'application sont encore référencées." >&2; exit 1; }
 
 # Signature ad hoc (obligatoire sur Apple Silicon après modification des binaires) :
 # chaque binaire, puis l'application entière.

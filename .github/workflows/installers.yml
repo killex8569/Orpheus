@@ -128,12 +128,20 @@ jobs:
 
   macos:
     name: macOS Apple Silicon (.dmg)
-    runs-on: macos-latest
+    # Les bibliothèques Homebrew (libmpv, ffmpeg) exigent au minimum le macOS de la machine
+    # de compilation : macos-15 plutôt que macos-latest pour couvrir plus de Mac.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
+      # Qt officiel : celui de Homebrew est découpé en paquets que macdeployqt gère mal.
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          cache: true
+
       - name: Dépendances (Homebrew)
-        run: brew install qt mpv ninja pkgconf librsvg
+        run: brew install mpv ninja pkgconf librsvg
 
       - name: Version
         id: version
@@ -141,7 +149,7 @@ jobs:
 
       - name: Compilation et tests
         run: |
-          cmake -S . -B build -G Ninja -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+          cmake -S . -B build -G Ninja -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
           cmake --build build
           ./build/orpheus_tests -silent
 
@@ -162,9 +170,10 @@ jobs:
           hdiutil detach "$mnt"
           app="$RUNNER_TEMP/Orpheus.app"
 
-          # Homebrew masqué : tout doit venir de l'application.
+          # Homebrew et le Qt de compilation masqués : tout doit venir de l'application.
           sudo mv /opt/homebrew /opt/homebrew.off
-          trap 'sudo mv /opt/homebrew.off /opt/homebrew' EXIT
+          mv "$QT_ROOT_DIR" "$QT_ROOT_DIR.off"
+          trap 'sudo mv /opt/homebrew.off /opt/homebrew; mv "$QT_ROOT_DIR.off" "$QT_ROOT_DIR"' EXIT
           "$app/Contents/MacOS/ffmpeg" -hide_banner -version | head -1
           "$app/Contents/MacOS/deno" --version
 
