@@ -155,6 +155,19 @@ private slots:
         QCOMPARE(db.playlists().size(), 1);
         QVERIFY(!db.deletePlaylist(db.cachePlaylistId()));
 
+        // Réglages : servis depuis la mémoire, mais bien persistés en base.
+        QCOMPARE(db.setting("volume", "80"), QString("80"));
+        db.setSetting("volume", "55");
+        db.setSetting("prefetch", "false");
+        db.removeSetting("prefetch");
+        {
+            Database reopened;
+            QVERIFY(reopened.open(dir.filePath("t.db"), nullptr));
+            QCOMPARE(reopened.setting("volume"), QString("55"));
+            QVERIFY(reopened.settingBool("prefetch", true));
+        }
+        QVERIFY(db.open(dir.filePath("t.db"), nullptr));
+
         // Upsert idempotent ; les métadonnées Spotify priment ensuite.
         const Track a = db.upsertTrack(input("abc", "", "ARTIST - Song (Official Video)"));
         const Track b = db.upsertTrack(input("abc", "Artist", "Song", "sp1"));

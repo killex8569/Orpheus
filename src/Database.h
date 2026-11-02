@@ -69,7 +69,7 @@ public:
     bool open(const QString &path, QString *error);
     qint64 cachePlaylistId() const { return m_cachePlaylist; }
 
-    // Réglages
+    // Réglages (servis depuis la mémoire, écrits en base)
     QString setting(const QString &key, const QString &def = {}) const;
     bool settingBool(const QString &key, bool def) const;
     void setSetting(const QString &key, const QString &value);
@@ -133,4 +133,7 @@ private:
     QList<Track> queryTracks(const QString &sql, const QVariantList &binds = {}) const;
     QSqlDatabase db() const;
     qint64 m_cachePlaylist = 0;
+    // Copie en mémoire de la table settings : lue très souvent (à chaque morceau,
+    // chaque téléchargement), elle n'est écrite qu'en cas de changement.
+    QHash<QString, QString> m_settings;
 };

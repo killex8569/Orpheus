@@ -1,5 +1,6 @@
 #include "Player.h"
 
+#include <QCoreApplication>
 #include <QDebug>
 #include <QRandomGenerator>
 #include <mpv/client.h>
@@ -61,6 +62,19 @@ Player::Player(Database *db, Downloader *dl, YtDlp *yt, QObject *parent)
             qInfo() << "téléchargement lent, bascule en streaming";
             startStreaming(m_generation);
         }
+    });
+    // Le curseur de volume envoie des dizaines de valeurs par seconde : seule la
+    // dernière est écrite en base (et à la fermeture si besoin).
+    m_volumeSave.setSingleShot(true);
+    m_volumeSave.setInterval(600);
+    auto saveVolume = [this] {
+        m_volumeSave.stop();
+        m_db->setSetting("volume", QString::number(m_volume));
+    };
+    connect(&m_volumeSave, &QTimer::timeout, this, saveVolume);
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this, saveVolume] {
+        if (m_volumeSave.isActive())
+            saveVolume();
     });
     m_listenTimer.setInterval(1000);
     connect(&m_listenTimer, &QTimer::timeout, this, &Player::trackListening);
@@ -413,7 +427,7 @@ void Player::setVolume(double v)
 {
     m_volume = qBound(0.0, v, 130.0);
     mpv_set_property_async(m_mpv, 0, "volume", MPV_FORMAT_DOUBLE, &m_volume);
-    m_db->setSetting("volume", QString::number(m_volume));
+    m_volumeSave.start();
     emit stateChanged();
 }
 

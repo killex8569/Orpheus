@@ -147,6 +147,9 @@ bool Database::open(const QString &path, QString *error)
     exec(d, "UPDATE tracks SET state = 'queued', error = NULL WHERE state IN ('downloading', 'failed')");
     exec(d, "UPDATE import_jobs SET status = 'interrupted', message = 'Interrompu (application fermée)' "
             "WHERE status IN ('running', 'pending')");
+    m_settings.clear();
+    for (QSqlQuery st = exec(d, "SELECT key, value FROM settings"); st.next();)
+        m_settings.insert(st.value(0).toString(), st.value(1).toString());
     QSqlQuery q = exec(d, "SELECT id FROM playlists WHERE kind = 'cache'");
     if (q.next()) {
         m_cachePlaylist = q.value(0).toLongLong();
@@ -162,8 +165,8 @@ bool Database::open(const QString &path, QString *error)
 
 QString Database::setting(const QString &key, const QString &def) const
 {
-    QSqlQuery q = exec(db(), "SELECT value FROM settings WHERE key = ?", {key});
-    return q.next() ? q.value(0).toString() : def;
+    const auto it = m_settings.constFind(key);
+    return it != m_settings.cend() ? *it : def;
 }
 
 bool Database::settingBool(const QString &key, bool def) const
@@ -174,12 +177,17 @@ bool Database::settingBool(const QString &key, bool def) const
 
 void Database::setSetting(const QString &key, const QString &value)
 {
+    if (const auto it = m_settings.constFind(key); it != m_settings.cend() && *it == value)
+        return;
+    m_settings.insert(key, value);
     exec(db(), "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
          {key, value});
 }
 
 void Database::removeSetting(const QString &key)
 {
+    if (!m_settings.remove(key))
+        return;
     exec(db(), "DELETE FROM settings WHERE key = ?", {key});
 }
 

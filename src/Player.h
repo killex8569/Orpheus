@@ -100,6 +100,7 @@ private:
     bool m_retried = false;
     int m_queueVersion = 0;
     QTimer m_streamFallback;
+    QTimer m_volumeSave;  // volume enregistré une fois le curseur relâché
     // Temps réellement écouté du morceau en cours (sauts et pauses exclus).
     QTimer m_listenTimer;
     qint64 m_listenTrack = 0;
