@@ -17,6 +17,7 @@ Rectangle {
         property string label
         property bool active
         property int count: -1
+        property bool dot: false   // pastille (ex. mise à jour disponible)
         Layout.fillWidth: true
         width: ListView.view ? ListView.view.width : implicitWidth
         height: 38
@@ -40,6 +41,11 @@ Rectangle {
                 font.pixelSize: 14
                 elide: Text.ElideRight
                 Layout.fillWidth: true
+            }
+            Rectangle {
+                visible: item.dot
+                width: 8; height: 8; radius: 4
+                color: OTheme.accent
             }
             Text {
                 visible: item.count >= 0
@@ -76,6 +82,11 @@ Rectangle {
         NavItem { iconName: "stats"; label: "Statistiques"; active: root.view === "stats"; onClicked: root.navigate("stats", 0) }
         NavItem { iconName: "download"; label: "Importer"; active: root.view === "import"; onClicked: root.navigate("import", 0) }
         NavItem { iconName: "settings"; label: "Paramètres"; active: root.view === "settings"; onClicked: root.navigate("settings", 0) }
+        NavItem {
+            iconName: "update"; label: "Mises à jour"; active: root.view === "updates"
+            dot: backend.updates.updateAvailable
+            onClicked: root.navigate("updates", 0)
+        }
 
         RowLayout {
             Layout.topMargin: 20

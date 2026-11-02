@@ -30,8 +30,14 @@ add_library(orpheus_core STATIC
     src/Resolver.cpp
     src/Importer.cpp
     src/Jam.cpp
+    src/UpdateChecker.cpp
 )
 target_include_directories(orpheus_core PUBLIC src)
+# Mises à jour : version locale (celle du projet) comparée à la dernière release GitHub.
+set(ORPHEUS_REPO "killex8569/Orpheus" CACHE STRING "Dépôt GitHub dont les releases sont suivies")
+target_compile_definitions(orpheus_core PRIVATE ORPHEUS_VERSION="${PROJECT_VERSION}" ORPHEUS_REPO="${ORPHEUS_REPO}")
+# Dossier des sources : sert à proposer la bonne commande de mise à jour (git pull).
+set_source_files_properties(src/UpdateChecker.cpp PROPERTIES COMPILE_DEFINITIONS ORPHEUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(orpheus_core PUBLIC Qt6::Core Qt6::Gui Qt6::Sql Qt6::Network)
 target_compile_options(orpheus_core PRIVATE -Wall -Wextra)
 
@@ -79,6 +85,7 @@ qt_add_qml_module(orpheus
         qml/LyricsView.qml
         qml/StatsView.qml
         qml/JamView.qml
+        qml/UpdatesView.qml
     RESOURCES ${ICONS}
 )
 

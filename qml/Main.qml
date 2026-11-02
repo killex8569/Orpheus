@@ -177,7 +177,7 @@ ApplicationWindow {
             Layout.fillHeight: true
             Layout.margins: 28
             Layout.bottomMargin: 8
-            currentIndex: ["search", "playlist", "queue", "import", "settings", "lyrics", "stats", "jam"].indexOf(win.view)
+            currentIndex: ["search", "playlist", "queue", "import", "settings", "lyrics", "stats", "jam", "updates"].indexOf(win.view)
 
             SearchView { id: searchView }
             PlaylistView { id: playlistView }
@@ -190,6 +190,7 @@ ApplicationWindow {
             LyricsView {}
             StatsView {}
             JamView {}
+            UpdatesView {}
         }
     }
 

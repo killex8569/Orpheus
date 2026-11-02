@@ -20,6 +20,7 @@ int main(int argc, char *argv[])
     app.setApplicationName("orpheus");
     app.setApplicationDisplayName("Orpheus");
     app.setDesktopFileName("orpheus");
+    app.setApplicationVersion(UpdateChecker::currentVersion());
     app.setWindowIcon(QIcon(":/qt/qml/Orpheus/icons/orpheus.svg"));
     // libmpv exige la locale « C » pour l'analyse des nombres.
     std::setlocale(LC_NUMERIC, "C");

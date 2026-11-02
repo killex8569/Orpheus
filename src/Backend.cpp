@@ -33,6 +33,10 @@ bool Backend::init(QString *error)
     m_jam = new JamController(&m_db, m_player, &m_paths, this);
     connect(m_jam, &JamController::toast, this, &Backend::toast);
     connect(m_jam, &JamController::queueChanged, this, &Backend::updateMarks);
+    m_updates = new UpdateChecker(this);
+    connect(m_updates, &UpdateChecker::updateFound, this, [this](const QString &v) {
+        emit toast(QStringLiteral("Mise à jour disponible : Orpheus %1 (onglet Mises à jour)").arg(v), false);
+    });
     m_searchSource = m_db.setting("search_source", "youtube");
 
     connect(m_player, &Player::stateChanged, this, &Backend::playerChanged);
@@ -102,6 +106,9 @@ bool Backend::init(QString *error)
     QTimer::singleShot(3000, m_dl, &Downloader::resumePending);
     // Paroles des morceaux déjà en local, récupérées tranquillement en arrière-plan.
     QTimer::singleShot(15000, m_lyrics, &LyricsService::enqueueMissing);
+    // Une seule vérification des mises à jour au lancement (désactivable).
+    if (m_db.settingBool("update_check", true))
+        QTimer::singleShot(4000, m_updates, &UpdateChecker::check);
     loadStats(m_statsDays);
     return true;
 }

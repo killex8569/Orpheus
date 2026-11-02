@@ -11,6 +11,7 @@
 #include "Matcher.h"
 #include "Spotify.h"
 #include "Track.h"
+#include "UpdateChecker.h"
 
 using namespace Matcher;
 
@@ -305,6 +306,18 @@ private slots:
         // Nouveau Jam : le blocage est levé.
         QVERIFY(hostS.host("Jam privé 2", "Alice", "4821", 0));
         QVERIFY(attempt("4821").first);
+    }
+
+    void versionCompare()
+    {
+        QCOMPARE(UpdateChecker::compareVersions("v1.0.0", "1.0.0"), 0);
+        QVERIFY(UpdateChecker::compareVersions("v1.0.1", "1.0.0") > 0);
+        QVERIFY(UpdateChecker::compareVersions("v1.10.0", "v1.9.9") > 0);  // numérique, pas alphabétique
+        QVERIFY(UpdateChecker::compareVersions("v2", "1.9.9") > 0);
+        QCOMPARE(UpdateChecker::compareVersions("1.2", "1.2.0"), 0);
+        QVERIFY(UpdateChecker::compareVersions("v0.9.0", "1.0.0") < 0);
+        QCOMPARE(UpdateChecker::compareVersions("v1.1.0-beta", "1.1.0"), 0);
+        QVERIFY(!UpdateChecker::currentVersion().isEmpty());
     }
 
     void pastedSpotifyLinks()

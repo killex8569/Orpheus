@@ -15,6 +15,7 @@
 #include "Resolver.h"
 #include "Spotify.h"
 #include "TrackModel.h"
+#include "UpdateChecker.h"
 #include "YtDlp.h"
 
 // Pont entre la logique de l'application et l'interface QML. Les imports
@@ -80,6 +81,8 @@ class Backend : public QObject {
     Q_PROPERTY(TrackModel *statsTracks READ statsTracks CONSTANT)
     // Jam : écoute synchronisée sur le réseau local.
     Q_PROPERTY(JamController *jam READ jam CONSTANT)
+    // Mises à jour (releases GitHub).
+    Q_PROPERTY(UpdateChecker *updates READ updates CONSTANT)
     Q_PROPERTY(QVariantMap stats READ stats NOTIFY statsChanged)
     Q_PROPERTY(QVariantList statsArtists READ statsArtists NOTIFY statsChanged)
 
@@ -140,6 +143,7 @@ public:
     int lyricsIndex() const;
     TrackModel *statsTracks() { return &m_statsTracks; }
     JamController *jam() const { return m_jam; }
+    UpdateChecker *updates() const { return m_updates; }
     QVariantMap stats() const { return m_stats; }
     QVariantList statsArtists() const { return m_statsArtists; }
 
@@ -235,6 +239,7 @@ private:
     Importer *m_importer;
     LyricsService *m_lyrics;
     JamController *m_jam = nullptr;
+    UpdateChecker *m_updates = nullptr;
     TrackModel m_search, m_local, m_playlistTracks, m_queue, m_statsTracks;
     QVariantList m_playlists, m_jobs, m_remoteYoutube, m_remoteSpotify;
     QVariantMap m_currentPlaylist;
