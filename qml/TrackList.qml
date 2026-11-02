@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // Liste de morceaux virtualisée (seules les lignes visibles sont créées).
 ListView {
     id: list
-    property string listName              // search | local | playlist | queue
+    property string listName              // search | local | playlist | queue | jam
     property bool editable: false          // monter / descendre / retirer
     property string emptyText: "Aucun morceau"
     property bool fitContent: false        // hauteur = contenu (listes imbriquées)
@@ -27,6 +27,8 @@ ListView {
     function isCurrent(index, trackId) {
         if (listName === "queue")
             return index === backend.queueIndex
+        if (listName === "jam")
+            return index === backend.jam.currentIndex
         return trackId > 0 && trackId === backend.currentTrackId
     }
 
@@ -218,10 +220,13 @@ ListView {
 
     Menu {
         id: menu
-        MenuItem { text: "Lire"; onTriggered: backend.play(list.listName, list.menuRow) }
-        MenuItem { text: "Lire ensuite"; visible: list.listName !== "queue"; height: visible ? implicitHeight : 0
+        MenuItem { text: backend.jam.active && !menu.inQueue ? "Lire (ajouter au Jam)" : "Lire"
+            onTriggered: backend.play(list.listName, list.menuRow) }
+        // Pendant un Jam, « Lire » et « Ajouter » envoient le morceau dans la file commune.
+        readonly property bool inQueue: list.listName === "queue" || list.listName === "jam"
+        MenuItem { text: "Lire ensuite"; visible: !menu.inQueue && !backend.jam.active; height: visible ? implicitHeight : 0
             onTriggered: backend.trackAction(list.listName, list.menuRow, "next") }
-        MenuItem { text: "Ajouter à la file"; visible: list.listName !== "queue"; height: visible ? implicitHeight : 0
+        MenuItem { text: backend.jam.active ? "Ajouter au Jam" : "Ajouter à la file"; visible: !menu.inQueue; height: visible ? implicitHeight : 0
             onTriggered: backend.trackAction(list.listName, list.menuRow, "enqueue") }
         Menu {
             id: playlistMenu
@@ -259,11 +264,11 @@ ListView {
         MenuItem { text: "Descendre"; visible: list.editable; height: visible ? implicitHeight : 0
             onTriggered: backend.trackAction(list.listName, list.menuRow, "moveDown") }
         MenuItem {
-            text: list.listName === "queue" ? "Retirer de la file" : "Retirer de la playlist"
-            visible: list.listName === "queue" || list.listName === "playlist"
+            text: ({ "queue": "Retirer de la file", "jam": "Retirer du Jam" })[list.listName] || "Retirer de la playlist"
+            visible: list.listName === "queue" || list.listName === "playlist" || list.listName === "jam"
             height: visible ? implicitHeight : 0
             onTriggered: backend.trackAction(list.listName, list.menuRow,
-                                             list.listName === "queue" ? "removeFromQueue" : "removeFromPlaylist")
+                                             ({ "queue": "removeFromQueue", "jam": "removeFromJam" })[list.listName] || "removeFromPlaylist")
         }
     }
 }

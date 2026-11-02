@@ -1,3 +1,4 @@
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -5,6 +6,7 @@
 
 #include "Database.h"
 #include "Importer.h"
+#include "Jam.h"
 #include "Lyrics.h"
 #include "Matcher.h"
 #include "Spotify.h"
@@ -169,6 +171,97 @@ private slots:
         QVERIFY(QTest::qWaitFor([&] { return allCount == 1; }, 2000));
         QCOMPARE(finished, 10);
         QCOMPARE(peak, 3);
+    }
+
+    void jamProtocol()
+    {
+        // Identifiants venus du réseau : ils servent à nommer des fichiers.
+        QVERIFY(Jam::isValidYtId("dQw4w9WgXcQ"));
+        QVERIFY(!Jam::isValidYtId("../../etc/x"));
+        QVERIFY(!Jam::isValidYtId("--exec=rm -"));
+        QVERIFY(!Jam::Item::fromJson({{"yt", "../../../a"}, {"title", "x"}}));
+        const auto it = Jam::Item::fromJson({{"yt", "dQw4w9WgXcQ"}, {"title", "T"}, {"thumb", "file:///etc/passwd"}, {"duration", 1e9}});
+        QVERIFY(it);
+        QVERIFY(it->thumbnail.isEmpty());
+        QCOMPARE(it->duration, 86400.0);
+
+        // Position attendue : ancre + temps écoulé ; départ programmé = négative.
+        Jam::State st;
+        st.items.append(*it);
+        st.playing = true;
+        st.anchorPos = 10;
+        st.anchorTime = 1000;
+        QCOMPARE(st.positionAt(3500), 12.5);
+        QCOMPARE(st.positionAt(500), 9.5);
+        QCOMPARE(st.positionAt(-9000), 0.0);
+        st.playing = false;
+        QCOMPARE(st.positionAt(99999), 10.0);
+        st.waiting = true;
+        QCOMPARE(st.positionAt(99999), 0.0);
+        QCOMPARE(Jam::State::fromJson(st.toJson()).items.first().ytId, QString("dQw4w9WgXcQ"));
+
+        // Horloge : on retient la mesure à l'aller-retour le plus court.
+        Jam::ClockSync clock;
+        clock.addSample(1000, 6100, 1200);  // rtt 200 ms : offset 5000 approximatif
+        clock.addSample(2000, 7020, 2040);  // rtt 40 ms : offset 5000 précis
+        QCOMPARE(clock.rtt(), qint64(40));
+        QCOMPARE(clock.offset(), qint64(5000));
+    }
+
+    void jamSession()
+    {
+        JamSession hostS, clientS;
+        QVERIFY(hostS.host("Jam test", "Alice", 0));
+        QVERIFY(hostS.port() > 0);
+        clientS.join(QHostAddress::LocalHost, hostS.port(), "Bob");
+        QVERIFY(QTest::qWaitFor([&] { return clientS.state().members.size() == 2 && !clientS.connecting(); }, 3000));
+        QCOMPARE(clientS.state().name, QString("Jam test"));
+        QCOMPARE(clientS.myId(), 2);
+
+        // Un invité ajoute des morceaux : le premier démarre, en attente de tout le monde.
+        Jam::Item a, b;
+        a.ytId = "aaaaaaaaaaa";
+        a.title = "A";
+        a.duration = 200;
+        b.ytId = "bbbbbbbbbbb";
+        b.title = "B";
+        clientS.add({a, b});
+        QVERIFY(QTest::qWaitFor([&] { return clientS.state().items.size() == 2; }, 3000));
+        QVERIFY(clientS.state().waiting);
+        QCOMPARE(clientS.state().items.first().addedBy, QString("Bob"));
+        const qint64 first = clientS.state().current()->id;
+
+        hostS.reportReady(first);
+        QTest::qWait(50);
+        QVERIFY(hostS.state().waiting);  // Bob n'est pas encore prêt
+        clientS.reportReady(first);
+        QVERIFY(QTest::qWaitFor([&] { return !clientS.state().waiting && clientS.state().playing; }, 3000));
+        // Départ programmé dans le futur, à la même heure pour tous.
+        QVERIFY(clientS.state().anchorTime > Jam::nowMs());
+
+        // Pause par un invité : tout le monde en pause, à la même position.
+        QTest::qWait(900);
+        clientS.pause();
+        QVERIFY(QTest::qWaitFor([&] { return !hostS.state().playing && !clientS.state().playing; }, 3000));
+        QVERIFY(hostS.state().anchorPos > 0 && hostS.state().anchorPos < 1);
+        QCOMPARE(clientS.state().anchorPos, hostS.state().anchorPos);
+
+        // Saut, puis morceau suivant ; l'horloge est synchronisée (même machine : ~0).
+        hostS.seek(42);
+        QVERIFY(QTest::qWaitFor([&] { return clientS.state().anchorPos == 42; }, 3000));
+        clientS.next();
+        QVERIFY(QTest::qWaitFor([&] { return clientS.state().index == 1 && clientS.state().waiting; }, 3000));
+        QVERIFY(qAbs(clientS.hostNow() - Jam::nowMs()) < 50);
+
+        // Retrait du morceau en cours : file terminée.
+        clientS.remove(clientS.state().current()->id);
+        QVERIFY(QTest::qWaitFor([&] { return clientS.state().items.size() == 1 && !clientS.state().current(); }, 3000));
+
+        // L'hôte termine : l'invité est prévenu et sort du Jam.
+        QSignalSpy notices(&clientS, &JamSession::notice);
+        hostS.leave();
+        QVERIFY(QTest::qWaitFor([&] { return clientS.role() == JamSession::None; }, 3000));
+        QVERIFY(!notices.isEmpty());
     }
 
     void pastedSpotifyLinks()

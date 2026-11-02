@@ -68,6 +68,11 @@ Rectangle {
         NavItem { iconName: "search"; label: "Rechercher"; active: root.view === "search"; onClicked: root.navigate("search", 0) }
         NavItem { iconName: "queue"; label: "File d'attente"; active: root.view === "queue"; onClicked: root.navigate("queue", 0) }
         NavItem { iconName: "lyrics"; label: "Paroles"; active: root.view === "lyrics"; onClicked: root.navigate("lyrics", 0) }
+        NavItem {
+            iconName: "jam"; label: "Jam"; active: root.view === "jam"
+            count: backend.jam.active ? backend.jam.members.length : -1
+            onClicked: root.navigate("jam", 0)
+        }
         NavItem { iconName: "stats"; label: "Statistiques"; active: root.view === "stats"; onClicked: root.navigate("stats", 0) }
         NavItem { iconName: "download"; label: "Importer"; active: root.view === "import"; onClicked: root.navigate("import", 0) }
         NavItem { iconName: "settings"; label: "Paramètres"; active: root.view === "settings"; onClicked: root.navigate("settings", 0) }

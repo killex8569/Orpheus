@@ -304,8 +304,10 @@ void Player::loadFile(const QString &target, const QString &source, const QStrin
     mpv_free_node_contents(&result);
     m_source = source;
     m_status.clear();
-    int no = 0;
-    mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &no);
+    // En pilotage externe, le départ est donné à l'heure convenue par le Jam.
+    int pause = m_external ? 1 : 0;
+    mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &pause);
+    m_paused = pause;
     m_db->markStarted(t->id);
     m_listenTrack = t->id;
     emit stateChanged();
@@ -340,6 +342,16 @@ void Player::advance(bool naturalEnd)
 {
     if (m_index < 0)
         return;
+    if (m_external) {
+        const qint64 id = current() ? current()->id : 0;
+        finishListening();
+        m_source.clear();
+        m_loading = false;
+        emit stateChanged();
+        if (naturalEnd)
+            emit endReached(id);
+        return;
+    }
     int next = -1;
     if (naturalEnd && m_repeat == RepeatOne)
         next = m_index;
@@ -422,7 +434,7 @@ void Player::seek(double pos)
     if (m_source.isEmpty())
         return;
     const QByteArray p = QByteArray::number(qMax(0.0, pos));
-    const char *args[] = {"seek", p.constData(), "absolute", nullptr};
+    const char *args[] = {"seek", p.constData(), "absolute+exact", nullptr};
     mpv_command_async(m_mpv, 0, args);
 }
 
@@ -545,6 +557,68 @@ void Player::clearQueue()
     m_unshuffled = m_shuffle ? m_queue : QList<Track>();
     m_index = m_queue.isEmpty() ? -1 : 0;
     bumpQueue();
+}
+
+void Player::setExternalControl(bool on)
+{
+    m_external = on;
+    if (on) {
+        m_shuffle = false;
+        m_unshuffled.clear();
+        m_repeat = RepeatOff;
+    }
+    setSpeed(1.0);
+    emit stateChanged();
+}
+
+void Player::setPaused(bool paused)
+{
+    if (m_source.isEmpty() || paused == m_paused)
+        return;
+    int flag = paused ? 1 : 0;
+    mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &flag);
+    m_paused = paused;
+    emit stateChanged();
+}
+
+void Player::setSpeed(double speed)
+{
+    speed = qBound(0.9, speed, 1.1);
+    if (qAbs(speed - m_speed) < 0.001)
+        return;
+    m_speed = speed;
+    mpv_set_property_async(m_mpv, 0, "speed", MPV_FORMAT_DOUBLE, &m_speed);
+}
+
+void Player::stop()
+{
+    finishListening();
+    ++m_generation;
+    m_waitingDownload = 0;
+    m_streamFallback.stop();
+    const char *args[] = {"stop", nullptr};
+    mpv_command_async(m_mpv, 0, args);
+    m_source.clear();
+    m_loading = false;
+    m_status.clear();
+    emit stateChanged();
+}
+
+void Player::syncQueue(const QList<Track> &tracks, int index)
+{
+    const auto cur = current();
+    const bool valid = index >= 0 && index < tracks.size();
+    const bool same = valid && cur && cur->id == tracks[index].id && (!m_source.isEmpty() || m_loading);
+    m_queue = tracks;
+    m_unshuffled.clear();
+    m_index = valid ? index : -1;
+    bumpQueue();
+    if (!valid)
+        stop();
+    else if (!same)
+        load(index, true);
+    else
+        emit trackChanged();
 }
 
 void Player::refreshTrack(const Track &t)

@@ -8,6 +8,7 @@
 #include "Database.h"
 #include "Downloader.h"
 #include "Importer.h"
+#include "JamController.h"
 #include "LyricsService.h"
 #include "Paths.h"
 #include "Player.h"
@@ -77,6 +78,8 @@ class Backend : public QObject {
     Q_PROPERTY(int lyricsIndex READ lyricsIndex NOTIFY positionChanged)
     // Statistiques (période choisie avec loadStats)
     Q_PROPERTY(TrackModel *statsTracks READ statsTracks CONSTANT)
+    // Jam : écoute synchronisée sur le réseau local.
+    Q_PROPERTY(JamController *jam READ jam CONSTANT)
     Q_PROPERTY(QVariantMap stats READ stats NOTIFY statsChanged)
     Q_PROPERTY(QVariantList statsArtists READ statsArtists NOTIFY statsChanged)
 
@@ -136,6 +139,7 @@ public:
     QString lyricsStatus() const { return m_lyrics->status(); }
     int lyricsIndex() const;
     TrackModel *statsTracks() { return &m_statsTracks; }
+    JamController *jam() const { return m_jam; }
     QVariantMap stats() const { return m_stats; }
     QVariantList statsArtists() const { return m_statsArtists; }
 
@@ -143,19 +147,20 @@ public:
     Q_INVOKABLE void search(const QString &text, const QString &source);
     Q_INVOKABLE void play(const QString &list, int row);
     Q_INVOKABLE void trackAction(const QString &list, int row, const QString &action, const QVariant &arg = {});
-    Q_INVOKABLE void togglePlay() { m_player->toggle(); }
-    Q_INVOKABLE void next() { m_player->next(); }
-    Q_INVOKABLE void prev() { m_player->prev(); }
-    Q_INVOKABLE void seek(double pos) { m_player->seek(pos); }
-    Q_INVOKABLE void seekRelative(double delta) { m_player->seek(m_player->position() + delta); }
+    // Pendant un Jam, ces commandes s'appliquent à tous les participants.
+    Q_INVOKABLE void togglePlay();
+    Q_INVOKABLE void next();
+    Q_INVOKABLE void prev();
+    Q_INVOKABLE void seek(double pos);
+    Q_INVOKABLE void seekRelative(double delta) { seek(m_player->position() + delta); }
     Q_INVOKABLE void setVolume(double v) { m_player->setVolume(v); }
-    Q_INVOKABLE void toggleShuffle() { m_player->setShuffle(!m_player->shuffle()); }
-    Q_INVOKABLE void cycleRepeat() { m_player->setRepeat((m_player->repeat() + 1) % 3); }
+    Q_INVOKABLE void toggleShuffle();
+    Q_INVOKABLE void cycleRepeat();
     void setShuffle(bool on) { m_player->setShuffle(on); }
     void setRepeat(int mode) { m_player->setRepeat(mode); }
     bool canGoNext() const { return m_player->index() + 1 < m_player->queue().size() || (m_player->repeat() != Player::RepeatOff && hasTrack()); }
     bool canGoPrevious() const { return hasTrack(); }
-    Q_INVOKABLE void clearQueue() { m_player->clearQueue(); }
+    Q_INVOKABLE void clearQueue();
 
     // Playlists
     Q_INVOKABLE qint64 createPlaylist(const QString &name, const QString &addFromList = {}, int row = -1);
@@ -216,6 +221,9 @@ private:
     void scheduleRefresh();
     void setTargetPlaylist(qint64 id);
     void updateMarks();
+    // Ajoute des morceaux à la file du Jam (après résolution si besoin).
+    void addToJam(const QList<Track> &tracks);
+    bool jamBlocks();  // action locale impossible pendant un Jam (avec message)
 
     Paths m_paths;
     Database m_db;
@@ -226,6 +234,7 @@ private:
     std::unique_ptr<TrackResolver> m_resolver;
     Importer *m_importer;
     LyricsService *m_lyrics;
+    JamController *m_jam = nullptr;
     TrackModel m_search, m_local, m_playlistTracks, m_queue, m_statsTracks;
     QVariantList m_playlists, m_jobs, m_remoteYoutube, m_remoteSpotify;
     QVariantMap m_currentPlaylist;

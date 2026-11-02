@@ -30,6 +30,8 @@ bool Backend::init(QString *error)
     m_resolver = std::make_unique<TrackResolver>(&m_db, m_yt);
     m_importer = new Importer(&m_db, m_yt, m_spotify, m_dl, m_resolver.get(), this);
     m_lyrics = new LyricsService(&m_db, this);
+    m_jam = new JamController(&m_db, m_player, &m_paths, this);
+    connect(m_jam, &JamController::toast, this, &Backend::toast);
     m_searchSource = m_db.setting("search_source", "youtube");
 
     connect(m_player, &Player::stateChanged, this, &Backend::playerChanged);
@@ -60,7 +62,7 @@ bool Backend::init(QString *error)
         if (ok)
             m_lyrics->enqueue(id);
         if (const auto t = m_db.track(id)) {
-            for (TrackModel *m : {&m_search, &m_local, &m_playlistTracks})
+            for (TrackModel *m : {&m_search, &m_local, &m_playlistTracks, m_jam->queue()})
                 m->updateTrack(*t);
         }
         scheduleRefresh();
@@ -241,6 +243,8 @@ TrackModel *Backend::model(const QString &list)
         return &m_queue;
     if (list == "stats")
         return &m_statsTracks;
+    if (list == "jam")
+        return m_jam->queue();
     return nullptr;
 }
 
@@ -299,6 +303,14 @@ void Backend::play(const QString &list, int row)
     const Track *t = m ? m->at(row) : nullptr;
     if (!t)
         return;
+    if (list == "jam") {
+        m_jam->jumpTo(row);
+        return;
+    }
+    if (m_jam->active()) {
+        addToJam({*t});
+        return;
+    }
     if (list == "queue") {
         m_player->jump(row);
         return;
@@ -353,7 +365,11 @@ void Backend::trackAction(const QString &list, int row, const QString &action, c
     if (!tp)
         return;
     const Track t = *tp;
-    if (action == "next" || action == "enqueue") {
+    if (action == "removeFromJam") {
+        m_jam->removeAt(row);
+    } else if ((action == "next" || action == "enqueue") && m_jam->active()) {
+        addToJam({t});
+    } else if (action == "next" || action == "enqueue") {
         const bool playNext = action == "next";
         resolve(t, [this, playNext](std::optional<Track> r, QString err) {
             if (!r) {
@@ -425,6 +441,82 @@ void Backend::trackAction(const QString &list, int row, const QString &action, c
     }
 }
 
+// ---------- Commandes de lecture (locales, ou communes pendant un Jam) ----------
+
+void Backend::togglePlay()
+{
+    m_jam->active() ? m_jam->togglePlay() : m_player->toggle();
+}
+
+void Backend::next()
+{
+    m_jam->active() ? m_jam->next() : m_player->next();
+}
+
+void Backend::prev()
+{
+    m_jam->active() ? m_jam->prev() : m_player->prev();
+}
+
+void Backend::seek(double pos)
+{
+    m_jam->active() ? m_jam->seek(pos) : m_player->seek(pos);
+}
+
+bool Backend::jamBlocks()
+{
+    if (m_jam->active())
+        emit toast(QStringLiteral("Indisponible pendant un Jam"), false);
+    return m_jam->active();
+}
+
+void Backend::toggleShuffle()
+{
+    if (!jamBlocks())
+        m_player->setShuffle(!m_player->shuffle());
+}
+
+void Backend::cycleRepeat()
+{
+    if (!jamBlocks())
+        m_player->setRepeat((m_player->repeat() + 1) % 3);
+}
+
+void Backend::clearQueue()
+{
+    if (!jamBlocks())
+        m_player->clearQueue();
+}
+
+void Backend::addToJam(const QList<Track> &tracks)
+{
+    // Morceaux déjà identifiés : envoyés tels quels ; sinon (résultat Spotify) on
+    // cherche d'abord la source YouTube, que chacun téléchargera de son côté.
+    QList<Track> ready;
+    for (const Track &t : tracks) {
+        if (!t.ytId.isEmpty()) {
+            ready.append(t);
+            continue;
+        }
+        emit toast(QStringLiteral("Recherche de la meilleure source sur YouTube…"), false);
+        resolve(t, [this](std::optional<Track> r, QString err) {
+            if (!r) {
+                emit toast(err, true);
+                return;
+            }
+            if (m_jam->add({*r}))
+                emit toast(QStringLiteral("Ajouté au Jam : %1").arg(r->title), false);
+        });
+    }
+    if (ready.isEmpty())
+        return;
+    const int n = m_jam->add(ready);
+    if (n == 1)
+        emit toast(QStringLiteral("Ajouté au Jam : %1").arg(ready.first().title), false);
+    else if (n > 1)
+        emit toast(QStringLiteral("%1 morceaux ajoutés au Jam").arg(n), false);
+}
+
 // ---------- Playlists ----------
 
 qint64 Backend::createPlaylist(const QString &name, const QString &addFromList, int row)
@@ -479,9 +571,16 @@ void Backend::filterPlaylist(const QString &text)
 
 void Backend::playPlaylist(qint64 id, bool shuffleOn)
 {
-    const auto tracks = m_db.playlistTracks(id);
+    auto tracks = m_db.playlistTracks(id);
     if (tracks.isEmpty()) {
         emit toast(QStringLiteral("Playlist vide"), true);
+        return;
+    }
+    if (m_jam->active()) {
+        // Pendant un Jam : la playlist rejoint la file commune (mélangée si demandé).
+        if (shuffleOn)
+            std::shuffle(tracks.begin(), tracks.end(), *QRandomGenerator::global());
+        addToJam(tracks);
         return;
     }
     const int start = shuffleOn ? int(QRandomGenerator::global()->bounded(int(tracks.size()))) : 0;
@@ -491,6 +590,10 @@ void Backend::playPlaylist(qint64 id, bool shuffleOn)
 
 void Backend::shufflePlaylist(qint64 id)
 {
+    if (m_jam->active()) {
+        playPlaylist(id, true);
+        return;
+    }
     const bool on = !m_player->shuffle();
     // Playlist en cours de lecture (ou rien à lire) : on bascule simplement le mode,
     // la file est mélangée en entier ou remise dans l'ordre de la playlist.

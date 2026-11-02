@@ -36,6 +36,8 @@ public:
     QString source() const { return m_source; }
     QString status() const { return m_status; }
     int queueVersion() const { return m_queueVersion; }
+    // Morceau chargé et prêt à jouer (fichier ou flux ouvert).
+    bool isReady() const { return !m_source.isEmpty() && !m_loading; }
 
     // Commandes
     void playList(const QList<Track> &tracks, int start, bool shuffle);
@@ -53,6 +55,16 @@ public:
     void clearQueue();
     void refreshTrack(const Track &t);
 
+    // Pilotage externe (Jam) : pas d'enchaînement automatique, chargement en pause
+    // (le départ est donné par le Jam), aléatoire et répétition désactivés.
+    void setExternalControl(bool on);
+    void setPaused(bool paused);
+    // Vitesse de lecture (légers ajustements pour rattraper un décalage).
+    void setSpeed(double speed);
+    void stop();
+    // Remplace la file sans recharger le morceau en cours s'il ne change pas.
+    void syncQueue(const QList<Track> &tracks, int index);
+
 signals:
     void stateChanged();
     void trackChanged();
@@ -62,6 +74,8 @@ signals:
     void playCounted(qint64 trackId);
     // Lecture repartie d'une nouvelle position (saut, ou début d'un morceau).
     void seeked();
+    // Fin naturelle d'un morceau en pilotage externe (le Jam décide de la suite).
+    void endReached(qint64 trackId);
 
 private:
     void onMpvEvents();
@@ -102,7 +116,9 @@ private:
     bool m_retried = false;
     int m_queueVersion = 0;
     QTimer m_streamFallback;
-    QTimer m_volumeSave;  // volume enregistré une fois le curseur relâché
+    QTimer m_volumeSave;
+    bool m_external = false;
+    double m_speed = 1.0;  // volume enregistré une fois le curseur relâché
     // Temps réellement écouté du morceau en cours (sauts et pauses exclus).
     QTimer m_listenTimer;
     qint64 m_listenTrack = 0;

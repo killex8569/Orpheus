@@ -62,10 +62,12 @@ Rectangle {
                 }
                 Text {
                     visible: text !== ""
-                    text: backend.status !== "" ? backend.status + (backend.cacheProgress > 0 ? " " + Math.round(backend.cacheProgress) + " %" : "")
+                    text: backend.jam.active ? "Jam · " + backend.jam.statusText
+                          : backend.status !== "" ? backend.status + (backend.cacheProgress > 0 ? " " + Math.round(backend.cacheProgress) + " %" : "")
                           : backend.source === "local" ? "local"
                           : backend.source === "stream" ? "streaming" : ""
-                    color: backend.status !== "" ? OTheme.muted : backend.source === "local" ? OTheme.ok : OTheme.warn
+                    color: backend.jam.active ? OTheme.accent
+                         : backend.status !== "" ? OTheme.muted : backend.source === "local" ? OTheme.ok : OTheme.warn
                     font.pixelSize: 11
                 }
             }
@@ -80,6 +82,7 @@ Rectangle {
                 spacing: 14
                 IconButton {
                     iconName: "shuffle"; iconSize: 17; active: backend.shuffle
+                    enabled: !backend.jam.active; opacity: enabled ? 1 : 0.3
                     tip: "Aléatoire (S)"; onClicked: backend.toggleShuffle()
                 }
                 IconButton { iconName: "prev"; iconSize: 18; color: OTheme.text; tip: "Précédent"; onClicked: backend.prev() }
@@ -125,6 +128,7 @@ Rectangle {
                 IconButton {
                     iconName: backend.repeat === 2 ? "repeat-one" : "repeat"; iconSize: 17
                     active: backend.repeat !== 0
+                    enabled: !backend.jam.active; opacity: enabled ? 1 : 0.3
                     tip: ["Répétition désactivée", "Répéter la file", "Répéter le morceau"][backend.repeat] + " (R)"
                     onClicked: backend.cycleRepeat()
                 }

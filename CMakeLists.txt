@@ -29,6 +29,7 @@ add_library(orpheus_core STATIC
     src/LyricsService.cpp
     src/Resolver.cpp
     src/Importer.cpp
+    src/Jam.cpp
 )
 target_include_directories(orpheus_core PUBLIC src)
 target_link_libraries(orpheus_core PUBLIC Qt6::Core Qt6::Gui Qt6::Sql Qt6::Network)
@@ -40,6 +41,7 @@ qt_add_executable(orpheus
     src/TrackModel.cpp
     src/Backend.cpp
     src/Mpris.cpp
+    src/JamController.cpp
 )
 target_link_libraries(orpheus PRIVATE orpheus_core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::DBus PkgConfig::MPV)
 target_compile_options(orpheus PRIVATE -Wall -Wextra)
@@ -76,6 +78,7 @@ qt_add_qml_module(orpheus
         qml/WheelScroll.qml
         qml/LyricsView.qml
         qml/StatsView.qml
+        qml/JamView.qml
     RESOURCES ${ICONS}
 )
 
