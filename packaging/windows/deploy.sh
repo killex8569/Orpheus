@@ -30,10 +30,23 @@ for c in "$PREFIX/bin/qtpaths6.exe" "$PREFIX/bin/qtpaths-qt6.exe" "$PREFIX/share
 done
 echo "windeployqt : $windeployqt ${args[*]}"
 "$windeployqt" "${args[@]}" "$OUT/orpheus.exe"
+plugins="."
+[[ -d $OUT/plugins ]] && plugins="plugins"
 # Seul le pilote SQLite sert.
-if [[ -d $OUT/sqldrivers ]]; then
-    find "$OUT/sqldrivers" -type f ! -name 'qsqlite*' -delete
+if [[ -d $OUT/$plugins/sqldrivers ]]; then
+    find "$OUT/$plugins/sqldrivers" -type f ! -name 'qsqlite*' -delete
 fi
+# Sans qt.conf, le Qt de MSYS2 cherche ses modules QML dans share/qt6/qml (organisation
+# de MSYS2) au lieu du dossier qml/ installé à côté de l'exécutable.
+[[ -d $OUT/qml ]] || { echo "windeployqt n'a pas créé le dossier qml/" >&2; exit 1; }
+cat > "$OUT/qt.conf" <<EOF
+[Paths]
+Prefix = .
+Plugins = $plugins
+QmlImports = qml
+Qml2Imports = qml
+EOF
+echo "qt.conf : Plugins = $plugins, QmlImports = qml"
 
 # windeployqt ne copie que Qt : libmpv, les DLL de ffmpeg, libstdc++… sont ajoutées en suivant
 # les imports de chaque exe/DLL (objdump) jusqu'à ce qu'il ne manque plus rien.

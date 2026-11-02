@@ -32,6 +32,9 @@ QT_DIR="${QT_ROOT_DIR:?QT_ROOT_DIR doit pointer vers le Qt officiel}"
     -executable="$MACOS/ffmpeg" \
     -executable="$MACOS/ffprobe" \
     -always-overwrite
+# Seul le pilote SQLite sert ; les autres (ODBC, PostgreSQL, Mimer) dépendent de
+# bibliothèques absentes.
+find "$APP/Contents/PlugIns/sqldrivers" -type f ! -name 'libqsqlite*' -delete
 
 # Les bibliothèques Homebrew sont compilées pour le macOS de la machine de compilation :
 # c'est donc la version minimale requise.
