@@ -16,12 +16,19 @@ if(UNIX AND NOT APPLE)
     set(ORPHEUS_MPRIS ON)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
 endif()
-find_package(PkgConfig REQUIRED)
 if(WIN32)
-    # MSYS2 : sans cela, pkg-config renvoie des chemins « /ucrt64/… » illisibles pour CMake.
-    set(PKG_CONFIG_ARGN --define-prefix)
+    # MSYS2 : pkg-config y renvoie des chemins « /ucrt64/… » illisibles pour CMake ;
+    # libmpv est donc cherchée directement (préfixe du compilateur MinGW).
+    find_path(MPV_INCLUDE_DIR mpv/client.h REQUIRED)
+    find_library(MPV_LIBRARY NAMES mpv libmpv REQUIRED)
+    add_library(PkgConfig::MPV UNKNOWN IMPORTED)
+    set_target_properties(PkgConfig::MPV PROPERTIES
+        IMPORTED_LOCATION ${MPV_LIBRARY}
+        INTERFACE_INCLUDE_DIRECTORIES ${MPV_INCLUDE_DIR})
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 endif()
-pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
