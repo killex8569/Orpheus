@@ -1,0 +1,228 @@
+#include "Downloader.h"
+
+#include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QTimer>
+
+#include "Matcher.h"
+
+static constexpr int kMaxAttempts = 3;
+static constexpr int kBackgroundGapMs = 1500;
+
+Downloader::Downloader(Database *db, YtDlp *yt, const Paths &paths, QObject *parent)
+    : QObject(parent), m_db(db), m_yt(yt), m_paths(paths)
+{
+}
+
+void Downloader::resumePending()
+{
+    // « downloading » : téléchargement coupé par la fermeture de l'application.
+    for (const QString &state : {QStringLiteral("downloading"), QStringLiteral("queued")})
+        for (const Track &t : m_db->tracksInState(state))
+            if (!m_queue.contains(t.id) && !m_active.contains(t.id)) {
+                m_db->setState(t.id, "queued");
+                m_queue.append(t.id);
+            }
+    pump();
+}
+
+void Downloader::enqueue(qint64 trackId)
+{
+    const auto t = m_db->track(trackId);
+    if (!t || t->isLocal() || m_active.contains(trackId) || m_queue.contains(trackId))
+        return;
+    m_db->setState(trackId, "queued");
+    m_queue.append(trackId);
+    emit statusChanged();
+    pump();
+}
+
+void Downloader::prioritize(qint64 trackId)
+{
+    if (auto it = m_active.find(trackId); it != m_active.end()) {
+        it->priority = true;
+        return;
+    }
+    m_queue.removeAll(trackId);
+    // Un seul transfert à la fois : l'arrière-plan s'efface (il reprendra ensuite).
+    for (auto it = m_active.begin(); it != m_active.end(); ++it)
+        if (!it->priority && it->process) {
+            it->preempted = true;
+            it->process->kill();
+        }
+    start(trackId, true);
+}
+
+double Downloader::progressOf(qint64 trackId) const
+{
+    const auto it = m_active.constFind(trackId);
+    return it == m_active.cend() ? -1 : it->progress;
+}
+
+QString Downloader::activeTitle() const
+{
+    QStringList parts;
+    for (const Active &a : m_active)
+        parts << QStringLiteral("%1 — %2 %").arg(a.title).arg(qRound(a.progress));
+    return parts.join('\n');
+}
+
+bool Downloader::canStartBackground() const
+{
+    // Rien en arrière-plan pendant un téléchargement prioritaire.
+    int background = 0;
+    for (const Active &a : m_active) {
+        if (a.priority)
+            return false;
+        ++background;
+    }
+    // Chaque morceau passe surtout du temps à attendre YouTube (extraction, délai
+    // imposé de quelques secondes) : deux en parallèle doublent le débit.
+    const int max = qBound(1, m_db->setting("parallel_downloads", "2").toInt(), 4);
+    return background < max;
+}
+
+void Downloader::pump()
+{
+    if (m_pumpScheduled || m_queue.isEmpty() || !canStartBackground())
+        return;
+    m_pumpScheduled = true;
+    QTimer::singleShot(kBackgroundGapMs, this, [this] {
+        m_pumpScheduled = false;
+        if (m_queue.isEmpty() || !canStartBackground())
+            return;
+        start(m_queue.takeFirst(), false);
+        pump();  // remplit l'emplacement suivant, s'il y en a un
+    });
+}
+
+void Downloader::start(qint64 id, bool priority)
+{
+    const int attempt = m_attempts.take(id) + 1;
+    const auto t = m_db->track(id);
+    if (!t) {
+        pump();
+        return;
+    }
+    if (t->isLocal()) {
+        emit finished(id, true, {});
+        pump();
+        return;
+    }
+    m_db->setState(id, "downloading");
+    Active a;
+    a.priority = priority;
+    a.attempt = attempt;
+    a.title = t->title;
+    m_active.insert(id, a);
+    emit statusChanged();
+    a.process = m_yt->download(
+        t->ytId, m_paths.library, m_paths.covers,
+        [this, id](double pct) {
+            if (auto it = m_active.find(id); it != m_active.end()) {
+                it->progress = pct;
+                emit progress(id, pct);
+            }
+        },
+        [this, id](YtDlp::DownloadResult r, QString err) { onDone(id, r, err); });
+    m_active[id].process = a.process;
+}
+
+void Downloader::onDone(qint64 id, const YtDlp::DownloadResult &r, const QString &err)
+{
+    const Active a = m_active.take(id);
+    const auto t = m_db->track(id);
+    if (a.preempted && t) {
+        // Interrompu volontairement : reprend en tête de file, sans compter d'échec.
+        cleanupPartial(t->ytId);
+        m_db->setState(id, "queued");
+        m_attempts[id] = a.attempt - 1;
+        m_queue.prepend(id);
+        emit statusChanged();
+        pump();
+        return;
+    }
+    if (err.isEmpty() && t) {
+        m_db->setFile(id, r.path, r.codec, r.bitrate, QFileInfo(r.path).size(), r.duration);
+        QString title = r.title, artist = r.artist;
+        if (title.isEmpty() && t->title == t->ytId && !r.rawTitle.isEmpty()) {
+            // Lien collé : seul l'identifiant de la vidéo était connu.
+            const auto split = Matcher::splitYoutubeTitle(r.rawTitle, r.channel);
+            artist = split.first;
+            title = split.second.isEmpty() ? r.rawTitle : split.second;
+        }
+        m_db->enrichMetadata(id, title, artist, r.album);
+        qInfo() << "en cache :" << t->title << r.codec << r.bitrate << "kb/s";
+        emit finished(id, true, {});
+        enforceCacheLimit();
+    } else if (t) {
+        cleanupPartial(t->ytId);
+        const QString low = err.toLower();
+        const bool permanent = low.contains("unavailable") || low.contains("private") || low.contains("removed")
+                               || low.contains("copyright") || low.contains("not available") || low.contains("introuvable");
+        qWarning() << "téléchargement échoué :" << t->title << err;
+        if (a.priority) {
+            // L'écoute bascule en streaming ; le cache sera retenté plus tard en arrière-plan.
+            m_db->setState(id, permanent ? "failed" : "queued", err);
+            if (!permanent && !m_queue.contains(id))
+                m_queue.append(id);
+        } else if (!permanent && a.attempt < kMaxAttempts) {
+            m_db->setState(id, "queued", err);
+            m_attempts[id] = a.attempt;
+            // Retour dans la file (et non lancement direct) : on garde un seul
+            // téléchargement à la fois, ce qui évite d'aggraver les refus de YouTube.
+            const int delay = 10000 * a.attempt * a.attempt;  // 10 s, 40 s
+            QTimer::singleShot(delay, this, [this, id] {
+                if (!m_active.contains(id) && !m_queue.contains(id)) {
+                    m_queue.append(id);
+                    pump();
+                }
+            });
+        } else {
+            m_db->setState(id, "failed", err);
+        }
+        emit finished(id, false, err);
+    }
+    emit statusChanged();
+    pump();
+}
+
+void Downloader::cleanupPartial(const QString &ytId)
+{
+    // Restes d'un téléchargement interrompu (.part, .webm, miniature non déplacée…).
+    const QDir lib(m_paths.library);
+    for (const QString &f : lib.entryList({ytId + ".*"}, QDir::Files))
+        QFile::remove(lib.filePath(f));
+}
+
+void Downloader::removeFile(qint64 trackId)
+{
+    if (const auto t = m_db->track(trackId)) {
+        if (!t->filePath.isEmpty())
+            QFile::remove(t->filePath);
+        qInfo() << "retiré du cache :" << t->title;
+    }
+    m_db->clearFile(trackId);
+}
+
+void Downloader::enforceCacheLimit()
+{
+    const qint64 limitMb = m_db->setting("cache_max_mb", "20480").toLongLong();
+    if (limitMb <= 0)
+        return;
+    const qint64 limit = limitMb * 1024 * 1024;
+    qint64 total = m_db->cacheSize().first;
+    if (total <= limit)
+        return;
+    for (const Track &t : m_db->evictionCandidates()) {
+        if (total <= limit)
+            break;
+        // On ne touche pas à ce qui vient d'être écouté.
+        if (t.lastPlayed > 0 && nowSecs() - t.lastPlayed < 3600)
+            continue;
+        removeFile(t.id);
+        total -= t.fileSize;
+    }
+}
