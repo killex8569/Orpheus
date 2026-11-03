@@ -60,6 +60,12 @@ class Backend : public QObject {
     Q_PROPERTY(bool spotifyConnected READ spotifyConnected NOTIFY accountsChanged)
     Q_PROPERTY(QString spotifyUser READ spotifyUser NOTIFY accountsChanged)
     Q_PROPERTY(QString spotifyRedirect READ spotifyRedirect CONSTANT)
+    // Session du lecteur web (cookie « sp_dc » du navigateur) : marche avec un compte gratuit.
+    Q_PROPERTY(bool spotifySession READ spotifySession NOTIFY accountsChanged)
+    Q_PROPERTY(QString spotifySessionSource READ spotifySessionSource NOTIFY accountsChanged)
+    Q_PROPERTY(bool spotifyConnecting READ spotifyConnecting NOTIFY accountsChanged)
+    // Dernier échec de connexion (affiché dans les paramètres ; "" après une réussite).
+    Q_PROPERTY(QString spotifyError READ spotifyError NOTIFY accountsChanged)
     Q_PROPERTY(QString ytdlpInfo READ ytdlpInfo NOTIFY accountsChanged)
     Q_PROPERTY(bool hasJsRuntime READ hasJsRuntime CONSTANT)
     Q_PROPERTY(QString jsRuntimeName READ jsRuntimeName CONSTANT)
@@ -128,6 +134,10 @@ public:
     bool spotifyConnected() const { return m_spotify->isConnected(); }
     QString spotifyUser() const { return m_spotify->userName(); }
     QString spotifyRedirect() const { return Spotify::RedirectUri; }
+    bool spotifySession() const { return m_spotifyWeb->isConnected(); }
+    QString spotifySessionSource() const { return m_spotifyWeb->source(); }
+    bool spotifyConnecting() const { return m_spotifyConnecting; }
+    QString spotifyError() const { return m_spotifyError; }
     QString ytdlpInfo() const;
     bool hasJsRuntime() const { return m_yt->hasJsRuntime(); }
     QString jsRuntimeName() const { return m_yt->jsRuntimeName(); }
@@ -187,6 +197,8 @@ public:
     Q_INVOKABLE void setPlaylistFolder(qint64 id, const QString &folder);
     // URL file:// d'un dossier (ouverture dans le gestionnaire de fichiers, dialogues).
     Q_INVOKABLE QString folderUrl(const QString &path) const;
+    // Chemin lisible (séparateurs du système) d'une URL file:// ou d'un chemin.
+    Q_INVOKABLE QString localPath(const QString &urlOrPath) const;
     QString libraryPath() const { return m_paths.library; }
     Q_INVOKABLE void deletePlaylist(qint64 id);
     Q_INVOKABLE void downloadPlaylist(qint64 id);
@@ -197,9 +209,17 @@ public:
     // Liens de morceaux Spotify collés (Ctrl+A, Ctrl+C dans une playlist, même privée).
     Q_INVOKABLE void importTrackLinks(const QString &text, const QString &name) { m_importer->importTrackLinks(text, name); }
     Q_INVOKABLE void loadRemote(const QString &kind);
+    // Playlists cochées dans « Importer » ([{url, title}]) : importées l'une après l'autre.
+    // folder : dossier parent (chaque playlist dans un sous-dossier à son nom), "" = bibliothèque.
+    Q_INVOKABLE void importSelection(const QVariantList &items, bool download, const QString &folder);
     Q_INVOKABLE void clearJobs();
     Q_INVOKABLE void spotifyLogin();
     Q_INVOKABLE void spotifyLogout();
+    // Connexion par le cookie de session du navigateur choisi (compte gratuit accepté)…
+    Q_INVOKABLE void spotifyConnectBrowser(const QString &browser);
+    // … ou par la valeur du cookie « sp_dc » collée à la main.
+    Q_INVOKABLE void spotifyConnectCookie(const QString &value);
+    Q_INVOKABLE void spotifySessionLogout();
     Q_INVOKABLE void updateYtDlp();
 
     // Statistiques : days = 7, 30, 365… ou 0 pour tout l'historique.
@@ -237,6 +257,12 @@ private:
     void updateMarks();
     // Ajoute des morceaux à la file du Jam (après résolution si besoin).
     void addToJam(const QList<Track> &tracks);
+    // Dossier choisi (chemin ou URL file://) vérifié : absolu, hors données d'Orpheus,
+    // accessible en écriture. "" avec *error rempli s'il ne convient pas.
+    QString checkedFolder(const QString &folder, QString *error) const;
+    // Signale les playlists distantes déjà importées (clé « imported »).
+    void markImported();
+    void finishSpotifyConnect(const QString &error);
     bool jamBlocks();  // action locale impossible pendant un Jam (avec message)
 
     Paths m_paths;
@@ -244,6 +270,7 @@ private:
     YtDlp *m_yt;
     Downloader *m_dl;
     Spotify *m_spotify;
+    SpotifyWeb *m_spotifyWeb;
     Player *m_player;
     std::unique_ptr<TrackResolver> m_resolver;
     Importer *m_importer;
@@ -263,6 +290,8 @@ private:
     quint64 m_placedLayout = 0;  // dernier état des playlists rangé sur le disque
     QString m_remoteError;
     bool m_remoteLoading = false;
+    bool m_spotifyConnecting = false;
+    QString m_spotifyError;
     QString m_ytdlpVersion;
     // Statistiques
     int m_statsDays = 30;

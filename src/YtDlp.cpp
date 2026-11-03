@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QVersionNumber>
 #include <memory>
@@ -82,6 +83,34 @@ QString ytdlpError(const QString &stderrText)
     if (line.contains(QLatin1String("403")))
         return QStringLiteral("YouTube a refusé le téléchargement (403) — nouvel essai automatique");
     return line.left(300);
+}
+
+QString netscapeCookie(const QString &text, const QString &domain, const QString &name)
+{
+    QString best;
+    qint64 bestExpiry = -1;
+    for (QString line : text.split('\n')) {
+        line.remove('\r');
+        if (line.startsWith(QLatin1String("#HttpOnly_")))
+            line = line.mid(10);
+        else if (line.isEmpty() || line.startsWith('#'))
+            continue;
+        const QStringList f = line.split('\t');
+        if (f.size() < 7 || f[5] != name || f[6].trimmed().isEmpty())
+            continue;
+        QString host = f[0].toLower();
+        if (host.startsWith('.'))
+            host = host.mid(1);
+        if (host != domain && !host.endsWith('.' + domain))
+            continue;
+        // Plusieurs entrées (sous-domaines) : la plus durable l'emporte.
+        const qint64 expiry = f[4].toLongLong();
+        if (expiry >= bestExpiry) {
+            best = f[6].trimmed();
+            bestExpiry = expiry;
+        }
+    }
+    return best;
 }
 
 // Copie gérée : binaire officiel autonome propre à chaque système (pas besoin de Python
@@ -484,6 +513,65 @@ QProcess *YtDlp::download(const QString &ytId, const QString &libraryDir, const 
     p->start(m_bin, args);
     timer->start(15 * 60 * 1000);
     return p;
+}
+
+void YtDlp::browserCookie(const QString &browser, const QString &domain, const QString &name,
+                          std::function<void(QString, QString)> cb)
+{
+    if (m_bin.isEmpty()) {
+        cb({}, QStringLiteral("yt-dlp introuvable : installez-le ou utilisez « Mettre à jour yt-dlp » dans les paramètres"));
+        return;
+    }
+    if (browser.isEmpty()) {
+        cb({}, QStringLiteral("choisissez un navigateur"));
+        return;
+    }
+    // Dossier temporaire privé (0700) : le fichier contient tous les cookies du navigateur.
+    auto dir = std::make_shared<QTemporaryDir>();
+    if (!dir->isValid()) {
+        cb({}, QStringLiteral("dossier temporaire impossible à créer"));
+        return;
+    }
+    const QString file = dir->filePath("cookies.txt");
+    auto *p = new QProcess(this);
+    auto finished = std::make_shared<bool>(false);
+    auto *timer = new QTimer(p);
+    timer->setSingleShot(true);
+    connect(timer, &QTimer::timeout, p, [p] { p->kill(); });
+    // Sans URL, yt-dlp charge les cookies, les écrit dans --cookies, puis s'arrête (code 2).
+    connect(p, &QProcess::finished, this, [p, dir, file, browser, domain, name, cb, finished](int, QProcess::ExitStatus st) {
+        if (*finished)
+            return;
+        *finished = true;
+        const QString err = QString::fromUtf8(p->readAllStandardError());
+        p->deleteLater();
+        QString text;
+        if (QFile f(file); f.open(QIODevice::ReadOnly))
+            text = QString::fromUtf8(f.readAll());
+        QFile::remove(file);
+        dir->remove();
+        const QString value = netscapeCookie(text, domain, name);
+        if (!value.isEmpty())
+            cb(value, {});
+        else if (st != QProcess::NormalExit)
+            cb({}, QStringLiteral("lecture des cookies de %1 trop longue (trousseau verrouillé ?)").arg(browser));
+        else if (text.isEmpty())
+            cb({}, QStringLiteral("cookies de %1 illisibles%2").arg(browser,
+                       err.contains(QLatin1String("ERROR")) ? " : " + ytdlpError(err) : QString()));
+        else
+            cb({}, QStringLiteral("aucune session %1 dans %2 : connectez-vous sur le site dans ce navigateur, puis réessayez")
+                       .arg(domain, browser));
+    });
+    connect(p, &QProcess::errorOccurred, this, [p, dir, cb, finished](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart || *finished)
+            return;
+        *finished = true;
+        p->deleteLater();
+        dir->remove();
+        cb({}, QStringLiteral("impossible de lancer yt-dlp"));
+    });
+    p->start(m_bin, {"--ignore-config", "--no-warnings", "--cookies-from-browser", browser, "--cookies", file});
+    timer->start(90000);
 }
 
 void YtDlp::updateManaged(std::function<void(QString, bool)> cb)

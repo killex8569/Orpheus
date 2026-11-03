@@ -41,6 +41,7 @@ add_library(orpheus_core STATIC
     src/YtDlp.cpp
     src/Downloader.cpp
     src/Spotify.cpp
+    src/SpotifyWeb.cpp
     src/Lyrics.cpp
     src/LyricsService.cpp
     src/Resolver.cpp
@@ -132,6 +133,7 @@ qt_add_qml_module(orpheus
         qml/Icon.qml
         qml/IconButton.qml
         qml/PillButton.qml
+        qml/OCheckBox.qml
         qml/Sidebar.qml
         qml/PlayerBar.qml
         qml/TrackList.qml

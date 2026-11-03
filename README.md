@@ -52,7 +52,8 @@ The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Set
 - **Imports**:
   - YouTube / YouTube Music playlist from a link, or from your account (cookies of the selected browser);
     if the browser's cookies can't be read (browser open, or Chromium-based browsers on Windows, which encrypt them), Orpheus says so once and carries on without them. On Windows, use Firefox;
-  - Spotify playlist or album: public ones without an account (≈100 tracks); private ones and liked songs with an account (OAuth, no secret).
+  - Spotify playlist or album: public playlists without an account, in full; private ones and liked songs with your account, **free or Premium** (see [Connect Spotify](#connect-spotify-optional)).
+  - From your accounts (Importer → "Mon compte YouTube" / "Mon compte Spotify"): tick the playlists you want, choose whether their tracks are downloaded for offline listening and, optionally, a folder (each playlist gets a sub-folder named after it). The selected playlists are imported one after the other; one that was already imported is marked as such and is synchronized.
   - Private Spotify playlist **without an account**: in the Spotify desktop app, select every track (`Ctrl+A`), copy (`Ctrl+C`), and paste into "Playlist Spotify privée : coller les morceaux". Track pages stay public even when the playlist is private. Pasting again under the same name updates the playlist.
     Each track is matched on YouTube with a score (title, artist, duration; live, cover, remix and similar versions are rejected).
   - "Synchroniser" adds new tracks without duplicates. Imported tracks also go into the "Cache local" playlist.
@@ -77,9 +78,19 @@ Other safeguards: queue resumes after a restart, automatic retries (10 s, then 4
 
 ## Connect Spotify (optional)
 
+**Free account (recommended)**: Orpheus uses the session of the Spotify web player.
+
+1. Log in to <https://open.spotify.com> in your browser.
+2. Paramètres → Compte Spotify: choose that browser, then click "Se connecter". Orpheus reads the `sp_dc` session cookie through yt-dlp (the temporary copy of the browser's cookies is deleted right away); it stays on your computer and is only sent to Spotify.
+   If the cookies can't be read (Chrome, Edge or Brave on Windows encrypt them), paste the value of the `sp_dc` cookie instead (F12 → Storage/Application → Cookies → `https://open.spotify.com`).
+
+This is not an official API: the cookie is exchanged for a web player token (a TOTP code derived from a secret published in the web player), and playlists are read with the web player's GraphQL queries. When Spotify rotates the secret, Orpheus fetches the newer ones from a community list (`xyloflake/spot-secrets-go`); when it changes its queries, Orpheus reads their new fingerprints from the web player. A deeper change needs an Orpheus update. The cookie lasts about a year.
+
+**Developer app (Premium)**: since February 2026, Spotify requires the owner of a developer app to have Premium (5 users per app). Under "Avec une application développeur Spotify":
+
 1. Create an app at <https://developer.spotify.com/dashboard> (check "Web API").
 2. Add the Redirect URI `http://127.0.0.1:8765/callback`.
-3. Paramètres → Compte Spotify: paste the Client ID, then click "Se connecter".
+3. Paste the Client ID, then click "Se connecter à Spotify". This connection is also needed to search on Spotify.
 
 ## yt-dlp
 
@@ -119,6 +130,7 @@ Hidden folders: on Windows, `AppData` is hidden: press `Win + R` and type `%LOCA
 | `src/Downloader.*` | download queue: priority, spacing, retries, cache limit |
 | `src/YtDlp.*` | async yt-dlp calls |
 | `src/Spotify.*` | OAuth PKCE, Web API, public pages |
+| `src/SpotifyWeb.*` | web player session (`sp_dc` cookie, TOTP token, GraphQL): free accounts, full public playlists |
 | `src/Matcher.*` | normalization and Spotify → YouTube scoring |
 | `src/Database.*` | SQLite schema and queries |
 | `qml/` | interface (views, track list, player bar) |

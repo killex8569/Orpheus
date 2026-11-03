@@ -79,3 +79,7 @@ private:
     bool m_placing = false, m_placeAgain = false;
     int m_placedMoved = 0, m_placedFailed = 0;
 };
+
+// Nom de fichier ou de dossier valable sous Windows, macOS et Linux (caractères interdits
+// remplacés, longueur limitée, sans point ni espace final) ; peut être vide.
+QString cleanFileName(const QString &name, int maxLength = 120);

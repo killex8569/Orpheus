@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 ScrollView {
@@ -11,24 +12,122 @@ ScrollView {
     readonly property string ytBrowser: { backend.ytdlpInfo; return backend.setting("yt_cookies_browser") }
     signal openPlaylist(var id)
 
+    // Playlists d'un compte : on coche celles à importer, puis on choisit si leurs
+    // morceaux sont téléchargés et dans quel dossier.
     component RemoteList: ColumnLayout {
+        id: rl
         property var items: []
-        spacing: 2
+        property var selected: ({})   // url → true
+        readonly property var chosen: items.filter(p => selected[p.url] === true)
+        property bool download: backend.settingBool("import_download", true)
+        property string folder: backend.setting("import_folder")
+        function setChecked(url, on) {
+            const s = Object.assign({}, selected)
+            if (on) s[url] = true; else delete s[url]
+            selected = s
+        }
+        function selectAll(onlyNew) {
+            const s = {}
+            for (const p of items) if (!onlyNew || !p.imported) s[p.url] = true
+            selected = s
+        }
+        visible: items.length > 0
+        spacing: 4
         Layout.fillWidth: true
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
+            OCheckBox {
+                text: rl.chosen.length + " / " + rl.items.length + " sélectionnée" + (rl.chosen.length > 1 ? "s" : "")
+                checkState: rl.chosen.length === 0 ? Qt.Unchecked
+                          : rl.chosen.length === rl.items.length ? Qt.Checked : Qt.PartiallyChecked
+                nextCheckState: () => rl.chosen.length === rl.items.length ? Qt.Unchecked : Qt.Checked
+                onClicked: rl.chosen.length === rl.items.length ? rl.selected = ({}) : rl.selectAll(false)
+            }
+            Item { Layout.fillWidth: true }
+            PillButton {
+                text: "Seulement les nouvelles"; implicitHeight: 28
+                visible: rl.items.some(p => p.imported)
+                onClicked: rl.selectAll(true)
+            }
+        }
+
         Repeater {
-            model: parent.items
+            model: rl.items
             delegate: ItemDelegate {
                 id: rd
                 required property var modelData
+                readonly property bool isChecked: rl.selected[modelData.url] === true
                 Layout.fillWidth: true
-                height: 44
+                implicitHeight: 42
                 hoverEnabled: true
-                background: Rectangle { radius: 6; color: rd.hovered ? OTheme.panel2 : "transparent" }
+                onClicked: rl.setChecked(modelData.url, !isChecked)
+                background: Rectangle { radius: 6; color: rd.isChecked ? OTheme.current : rd.hovered ? OTheme.panel2 : "transparent" }
                 contentItem: RowLayout {
+                    spacing: 10
+                    OCheckBox { checked: rd.isChecked; onToggled: rl.setChecked(rd.modelData.url, checked) }
                     Text { text: rd.modelData.title; color: OTheme.text; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                    Text {
+                        visible: rd.modelData.imported === true
+                        text: "Déjà importée"
+                        color: OTheme.ok; font.pixelSize: 12
+                    }
+                    PillButton {
+                        visible: rd.modelData.imported === true && rd.modelData.playlistId > 0
+                        text: "Ouvrir"; implicitHeight: 26
+                        onClicked: scroll.openPlaylist(rd.modelData.playlistId)
+                    }
                     Text { visible: rd.modelData.count >= 0; text: rd.modelData.count + " titres"; color: OTheme.muted; font.pixelSize: 12 }
-                    PillButton { text: "Importer"; implicitHeight: 30; onClicked: backend.importUrl(rd.modelData.url) }
                 }
+            }
+        }
+
+        Rectangle { Layout.fillWidth: true; Layout.topMargin: 6; implicitHeight: 1; color: OTheme.border }
+
+        OCheckBox {
+            Layout.topMargin: 4
+            text: "Télécharger les morceaux en local (écoute hors ligne)"
+            checked: rl.download
+            onToggled: rl.download = checked
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            Icon { iconName: "disk"; size: 14; color: OTheme.muted }
+            Text {
+                text: rl.folder === "" ? "Dossier : bibliothèque d'Orpheus (par défaut)"
+                                       : "Dossier : " + backend.localPath(rl.folder) + " (un sous-dossier par playlist)"
+                color: OTheme.muted; font.pixelSize: 13
+                elide: Text.ElideMiddle
+                Layout.fillWidth: true
+            }
+            PillButton { text: "Choisir un dossier…"; implicitHeight: 28; onClicked: folderDialog.open() }
+            PillButton { text: "Par défaut"; implicitHeight: 28; visible: rl.folder !== ""; onClicked: rl.folder = "" }
+        }
+        FolderDialog {
+            id: folderDialog
+            title: "Dossier où ranger les playlists importées"
+            currentFolder: backend.folderUrl(rl.folder === "" ? "" : backend.localPath(rl.folder))
+            onAccepted: rl.folder = selectedFolder.toString()
+        }
+        RowLayout {
+            Layout.topMargin: 4
+            spacing: 12
+            PillButton {
+                text: rl.chosen.length > 1 ? "Importer les " + rl.chosen.length + " playlists"
+                    : rl.chosen.length === 1 ? "Importer la playlist" : "Importer la sélection"
+                primary: true
+                enabled: rl.chosen.length > 0
+                onClicked: {
+                    backend.importSelection(rl.chosen.map(p => ({ url: p.url, title: p.title })), rl.download, rl.folder)
+                    rl.selected = ({})
+                }
+            }
+            Text {
+                text: "Importées l'une après l'autre. Une playlist déjà importée est synchronisée (nouveaux morceaux, sans doublon)."
+                color: OTheme.muted; font.pixelSize: 12; wrapMode: Text.WordWrap
+                Layout.fillWidth: true
             }
         }
     }
@@ -49,7 +148,7 @@ ScrollView {
 
         Card {
             title: "Depuis un lien"
-            subtitle: "Playlist YouTube / YouTube Music, ou playlist / album Spotify (les playlists publiques fonctionnent même sans compte)."
+            subtitle: "Playlist YouTube / YouTube Music, ou playlist / album Spotify (les playlists publiques fonctionnent en entier, même sans compte)."
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
@@ -139,13 +238,21 @@ ScrollView {
         }
 
         Card {
+            id: spotifyCard
             title: "Mon compte Spotify"
-            subtitle: backend.spotifyConnected
-                      ? "Connecté" + (backend.spotifyUser ? " en tant que " + backend.spotifyUser : "") + "."
-                      : "Connectez votre compte dans les paramètres pour vos playlists privées et titres likés."
-            PillButton {
-                text: backend.spotifyConnected ? "Afficher mes playlists" : "Ouvrir les paramètres"
-                onClicked: backend.spotifyConnected ? backend.loadRemote("spotify") : scroll.openSettings()
+            readonly property bool connected: backend.spotifySession || backend.spotifyConnected
+            subtitle: backend.spotifySession
+                      ? "Connecté par la session de votre navigateur (compte gratuit accepté) : playlists privées et titres likés compris."
+                      : backend.spotifyConnected
+                        ? "Connecté" + (backend.spotifyUser ? " en tant que " + backend.spotifyUser : "") + " (application développeur)."
+                        : "Connectez votre compte Spotify, <b>gratuit ou Premium</b>, dans les paramètres pour choisir parmi vos playlists, privées comprises, et vos titres likés."
+            RowLayout {
+                spacing: 10
+                PillButton {
+                    text: spotifyCard.connected ? "Afficher mes playlists" : "Ouvrir les paramètres"
+                    onClicked: spotifyCard.connected ? backend.loadRemote("spotify") : scroll.openSettings()
+                }
+                Spinner { visible: backend.remoteLoading }
             }
             RemoteList { items: backend.remoteSpotify }
         }

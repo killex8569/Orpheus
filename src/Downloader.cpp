@@ -209,19 +209,24 @@ void Downloader::cleanupPartial(const QString &ytId)
         QFile::remove(lib.filePath(f));
 }
 
+QString cleanFileName(const QString &name, int maxLength)
+{
+    QString clean;
+    for (const QChar c : name)
+        clean += (c.unicode() < 32 || QStringLiteral("<>:\"/\\|?*").contains(c)) ? QChar(' ') : c;
+    clean = clean.simplified().left(maxLength);
+    while (clean.endsWith('.') || clean.endsWith(' '))
+        clean.chop(1);
+    return clean;
+}
+
 QString Downloader::fileNameFor(const Track &t, const QString &ext, bool inLibrary)
 {
     const QString suffix = ext.isEmpty() ? QString() : "." + ext;
     if (inLibrary)
         return t.ytId + suffix;
     // Nom lisible, valable sous Windows, macOS et Linux ; l'id évite les collisions.
-    QString base = t.artist.isEmpty() ? t.title : t.artist + " - " + t.title;
-    QString clean;
-    for (const QChar c : std::as_const(base))
-        clean += (c.unicode() < 32 || QStringLiteral("<>:\"/\\|?*").contains(c)) ? QChar(' ') : c;
-    clean = clean.simplified().left(120);
-    while (clean.endsWith('.') || clean.endsWith(' '))
-        clean.chop(1);
+    const QString clean = cleanFileName(t.artist.isEmpty() ? t.title : t.artist + " - " + t.title);
     return (clean.isEmpty() ? QString() : clean + " ") + "[" + t.ytId + "]" + suffix;
 }
 

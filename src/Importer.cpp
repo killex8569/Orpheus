@@ -1,5 +1,8 @@
 #include "Importer.h"
 
+#include <QDebug>
+#include <QDir>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 #include <memory>
@@ -54,39 +57,81 @@ void runParallel(int count, int width, std::function<void(int, std::function<voi
 
 // ---------- Imports ----------
 
-Importer::Importer(Database *db, YtDlp *yt, Spotify *spotify, Downloader *dl, TrackResolver *resolver, QObject *parent)
-    : QObject(parent), m_db(db), m_yt(yt), m_spotify(spotify), m_dl(dl), m_resolver(resolver)
+Importer::Importer(Database *db, YtDlp *yt, Spotify *spotify, SpotifyWeb *spotifyWeb, Downloader *dl, TrackResolver *resolver,
+                   QObject *parent)
+    : QObject(parent), m_db(db), m_yt(yt), m_spotify(spotify), m_spotifyWeb(spotifyWeb), m_dl(dl), m_resolver(resolver)
 {
+}
+
+std::optional<Importer::Source> Importer::parse(const QString &url, QString *error) const
+{
+    if (url == "spotify:liked")
+        return Source{"spotify", "playlist", "liked"};
+    if (const auto sp = parseSpotifyUrl(url); !sp.first.isEmpty())
+        return Source{"spotify", sp.first, sp.second};
+    if (url.contains("youtube.com") || url.contains("youtu.be")) {
+        const QString ref = QUrlQuery(QUrl(url).query()).queryItemValue("list");
+        if (!ref.isEmpty())
+            return Source{"youtube", {}, ref};
+        *error = QStringLiteral("Le lien YouTube ne contient pas de playlist (paramètre list=)");
+        return std::nullopt;
+    }
+    *error = QStringLiteral("Lien non reconnu : collez un lien de playlist YouTube ou Spotify");
+    return std::nullopt;
 }
 
 void Importer::importUrl(const QString &rawUrl)
 {
     const QString url = rawUrl.trimmed();
-    QString source, kind, ref;
-    if (url == "spotify:liked") {
-        source = "spotify";
-        kind = "playlist";
-        ref = "liked";
-    } else if (const auto sp = parseSpotifyUrl(url); !sp.first.isEmpty()) {
-        source = "spotify";
-        kind = sp.first;
-        ref = sp.second;
-    } else if (url.contains("youtube.com") || url.contains("youtu.be")) {
-        const QUrlQuery q(QUrl(url).query());
-        ref = q.queryItemValue("list");
-        if (ref.isEmpty()) {
-            emit toast(QStringLiteral("Le lien YouTube ne contient pas de playlist (paramètre list=)"), true);
-            return;
-        }
-        source = "youtube";
-    } else {
-        emit toast(QStringLiteral("Lien non reconnu : collez un lien de playlist YouTube ou Spotify"), true);
+    QString error;
+    const auto src = parse(url, &error);
+    if (!src) {
+        emit toast(error, true);
         return;
     }
-    const qint64 job = m_db->createJob(source, url);
+    const qint64 job = m_db->createJob(src->source, url);
     emit jobsChanged();
     emit toast(QStringLiteral("Import lancé"), false);
-    run(job, source, kind, ref, url);
+    run(job, *src, url, {}, [] {});
+}
+
+void Importer::importMany(const QList<QPair<QString, QString>> &items, const ImportOptions &options)
+{
+    int added = 0;
+    for (const auto &[rawUrl, title] : items) {
+        const QString url = rawUrl.trimmed();
+        QString error;
+        const auto src = parse(url, &error);
+        if (!src) {
+            emit toast(error, true);
+            continue;
+        }
+        // Le job porte déjà le nom de la playlist : la file d'attente reste lisible.
+        m_queue.append({m_db->createJob(src->source, title.isEmpty() ? url : title), *src, url, options});
+        ++added;
+    }
+    if (added == 0)
+        return;
+    emit jobsChanged();
+    emit toast(added > 1 ? QStringLiteral("%1 imports en file : ils seront traités l'un après l'autre").arg(added)
+                         : QStringLiteral("Import lancé"),
+               false);
+    startNext();
+}
+
+void Importer::startNext()
+{
+    if (m_queueBusy || m_queue.isEmpty())
+        return;
+    m_queueBusy = true;
+    const Queued q = m_queue.takeFirst();
+    run(q.job, q.src, q.url, q.options, [this] {
+        // Rappel différé : l'import suivant ne démarre pas dans la pile de celui qui finit.
+        QTimer::singleShot(0, this, [this] {
+            m_queueBusy = false;
+            startNext();
+        });
+    });
 }
 
 void Importer::syncPlaylist(qint64 id)
@@ -179,39 +224,68 @@ void Importer::fail(qint64 jobId, const QString &err)
     emit jobsChanged();
 }
 
-void Importer::run(qint64 jobId, const QString &source, const QString &kind, const QString &ref, const QString &url)
+void Importer::run(qint64 jobId, const Source &src, const QString &url, const ImportOptions &options,
+                   std::function<void()> done)
 {
-    if (source == "youtube") {
-        m_yt->playlist(url, [this, jobId, ref](QString name, QList<Track> tracks, QString err) {
-            if (!err.isEmpty())
-                fail(jobId, err);
-            else
-                importTracks(jobId, "youtube", ref, name, tracks);
-        });
+    auto got = [this, jobId, src, options, done](QString name, QList<Track> tracks, QString err) {
+        if (!err.isEmpty()) {
+            fail(jobId, err);
+            done();
+            return;
+        }
+        importTracks(jobId, src.source, src.source == "youtube" ? src.ref : src.kind + ":" + src.ref, name, tracks, options,
+                     done);
+    };
+    if (src.source == "youtube")
+        m_yt->playlist(url, got);
+    else
+        runSpotify(src, got);
+}
+
+void Importer::runSpotify(const Source &src, std::function<void(QString, QList<Track>, QString)> got)
+{
+    const QString kind = src.kind, ref = src.ref;
+    if (ref == "liked") {
+        // Session du lecteur web (compte gratuit) d'abord, puis application développeur.
+        if (m_spotifyWeb->isConnected())
+            m_spotifyWeb->likedTracks(got);
+        else if (m_spotify->isConnected())
+            m_spotify->tracks(kind, ref, got);
+        else
+            got({}, {}, QStringLiteral("connectez votre compte Spotify (Paramètres) pour importer les titres likés"));
         return;
     }
-    auto got = [this, jobId, kind, ref](QString name, QList<Track> tracks, QString err) {
-        if (!err.isEmpty())
-            fail(jobId, err);
-        else
-            importTracks(jobId, "spotify", kind + ":" + ref, name, tracks);
-    };
-    if (m_spotify->isConnected()) {
+    // Replis : API officielle (application développeur), puis page d'intégration (~100 titres).
+    auto fallback = [this, kind, ref, got] {
+        if (!m_spotify->isConnected()) {
+            m_spotify->publicTracks(kind, ref, got);
+            return;
+        }
         m_spotify->tracks(kind, ref, [this, kind, ref, got](QString name, QList<Track> tracks, QString err) {
             // Playlist d'un tiers inaccessible via l'API : page publique en repli.
-            if (!err.isEmpty() && ref != "liked")
+            if (!err.isEmpty())
                 m_spotify->publicTracks(kind, ref, got);
             else
                 got(name, tracks, err);
         });
-    } else if (ref == "liked") {
-        fail(jobId, QStringLiteral("connectez votre compte Spotify pour importer les titres likés"));
-    } else {
-        m_spotify->publicTracks(kind, ref, got);
+    };
+    if (kind != "playlist") {
+        fallback();
+        return;
     }
+    // Lecteur web : playlist entière, privée comprise avec un compte connecté (même gratuit).
+    m_spotifyWeb->playlistTracks(ref, [got, fallback](QString name, QList<Track> tracks, QString err) {
+        if (err.isEmpty()) {
+            got(name, tracks, {});
+            return;
+        }
+        qWarning() << "Spotify (lecteur web) :" << err << "— repli sur les autres méthodes";
+        fallback();
+    });
 }
 
-void Importer::importTracks(qint64 jobId, const QString &kind, const QString &ref, const QString &name, const QList<Track> &tracks)
+void Importer::importTracks(qint64 jobId, const QString &kind, const QString &ref, const QString &name, const QList<Track> &tracks,
+                            const ImportOptions &options, std::function<void()> done)
 {
     // Ré-importer la même source met à jour sa playlist (synchronisation sans doublons).
     qint64 playlistId = m_db->playlistBySource(kind, ref).value_or(0);
@@ -219,6 +293,23 @@ void Importer::importTracks(qint64 jobId, const QString &kind, const QString &re
         m_db->renamePlaylist(playlistId, name);
     else
         playlistId = m_db->createPlaylist(name, kind, ref);
+    // Dossier choisi : la playlist range ses fichiers dans <dossier>/<nom de la playlist>,
+    // avant tout téléchargement (les fichiers y arrivent directement).
+    if (!options.parentFolder.isEmpty()) {
+        QString sub = cleanFileName(name, 100);
+        if (sub.isEmpty())
+            sub = QStringLiteral("Playlist");
+        const QString dir = QDir::cleanPath(options.parentFolder + "/" + sub);
+        const auto p = m_db->playlist(playlistId);
+        if (p && p->folder != dir) {
+            if (QDir().mkpath(dir))
+                m_db->setPlaylistFolder(playlistId, dir);
+            else
+                emit toast(QStringLiteral("Impossible de créer le dossier « %1 » : fichiers gardés dans la bibliothèque")
+                               .arg(QDir::toNativeSeparators(dir)),
+                           true);
+        }
+    }
     emit playlistsChanged();
 
     struct State {
@@ -242,7 +333,7 @@ void Importer::importTracks(qint64 jobId, const QString &kind, const QString &re
     m_db->updateJob(st->job);
     emit jobsChanged();
 
-    const bool download = m_db->settingBool("import_download", true);
+    const bool download = options.download.value_or(m_db->settingBool("import_download", true));
     const qint64 cache = m_db->cachePlaylistId();
     // Ajoute à la playlist les morceaux résolus, dans l'ordre d'origine.
     auto flush = [this, st, playlistId, cache, download] {
@@ -274,12 +365,14 @@ void Importer::importTracks(qint64 jobId, const QString &kind, const QString &re
                 done();
             });
         },
-        [this, st, playlistId] {
+        [this, st, playlistId, done] {
             st->job.status = "done";
             st->job.message = st->missing.isEmpty() ? QString() : "Introuvables : " + st->missing.join(" · ");
             m_db->updateJob(st->job);
             emit jobsChanged();
             emit finished(playlistId);
-            emit toast(QStringLiteral("Import terminé : %1 morceaux").arg(st->job.done), false);
+            emit toast(QStringLiteral("« %1 » importée : %2 morceaux").arg(st->job.name).arg(st->job.done), false);
+            if (done)
+                done();
         });
 }

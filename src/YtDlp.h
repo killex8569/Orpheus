@@ -56,6 +56,11 @@ public:
                        std::function<void(double)> progress, std::function<void(DownloadResult, QString error)> done);
     // Installe/met à jour une copie de yt-dlp gérée par Orpheus (toujours récente).
     void updateManaged(std::function<void(QString message, bool ok)> cb);
+    // Valeur d'un cookie du navigateur (ex. « sp_dc » de spotify.com). yt-dlp sait lire et
+    // déchiffrer les bases de cookies des navigateurs ; leur copie temporaire, privée,
+    // est effacée aussitôt lue. Rien n'est envoyé sur le réseau.
+    void browserCookie(const QString &browser, const QString &domain, const QString &name,
+                       std::function<void(QString value, QString error)> cb);
 
 signals:
     // Les cookies du navigateur choisi sont illisibles (navigateur ouvert, chiffrement
@@ -78,3 +83,5 @@ private:
 };
 
 QString ytdlpError(const QString &stderrText);
+// Valeur d'un cookie dans un fichier au format Netscape (écrit par yt-dlp) ; "" si absent.
+QString netscapeCookie(const QString &text, const QString &domain, const QString &name);

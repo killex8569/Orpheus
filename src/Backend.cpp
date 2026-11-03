@@ -49,9 +49,10 @@ bool Backend::init(QString *error)
         refreshPlaylists();
     });
     m_spotify = new Spotify(&m_db, this);
+    m_spotifyWeb = new SpotifyWeb(&m_db, this);
     m_player = new Player(&m_db, m_dl, m_yt, this);
     m_resolver = std::make_unique<TrackResolver>(&m_db, m_yt);
-    m_importer = new Importer(&m_db, m_yt, m_spotify, m_dl, m_resolver.get(), this);
+    m_importer = new Importer(&m_db, m_yt, m_spotify, m_spotifyWeb, m_dl, m_resolver.get(), this);
     m_lyrics = new LyricsService(&m_db, this);
     m_jam = new JamController(&m_db, m_player, &m_paths, this);
     connect(m_jam, &JamController::toast, this, &Backend::toast);
@@ -77,6 +78,7 @@ bool Backend::init(QString *error)
     connect(m_importer, &Importer::toast, this, &Backend::toast);
     connect(m_importer, &Importer::finished, this, [this](qint64 playlistId) {
         refreshPlaylists();
+        markImported();
         if (m_currentPlaylistId == playlistId)
             openPlaylist(playlistId);
     });
@@ -680,37 +682,48 @@ void Backend::movePlaylist(qint64 id, int index)
     refreshPlaylists();
 }
 
+QString Backend::checkedFolder(const QString &folder, QString *error) const
+{
+    QString path = folder.trimmed();
+    if (path.startsWith(QLatin1String("file:")))
+        path = QUrl(path).toLocalFile();
+    path = path.isEmpty() ? QString() : QDir::cleanPath(QDir::fromNativeSeparators(path));
+    if (path.isEmpty())
+        return {};
+    const QFileInfo info(path);
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+    const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
+#else
+    const Qt::CaseSensitivity cs = Qt::CaseSensitive;
+#endif
+    const QString data = QDir::cleanPath(m_paths.data);
+    if (!info.isAbsolute() || info.isRoot()) {
+        *error = QStringLiteral("Choisissez un dossier précis (pas la racine d'un disque)");
+        return {};
+    }
+    if (path.compare(data, cs) == 0 || path.startsWith(data + "/", cs)) {
+        *error = QStringLiteral("Ce dossier appartient déjà à Orpheus : choisissez-en un autre");
+        return {};
+    }
+    // Dossier créé au besoin, puis essai d'écriture (droits, disque en lecture seule…).
+    QTemporaryFile probe(path + "/.orpheus-XXXXXX");
+    if (!QDir().mkpath(path) || !probe.open()) {
+        *error = QStringLiteral("Impossible d'écrire dans « %1 »").arg(QDir::toNativeSeparators(path));
+        return {};
+    }
+    return path;
+}
+
 void Backend::setPlaylistFolder(qint64 id, const QString &folder)
 {
     const auto p = m_db.playlist(id);
     if (!p || p->kind == QLatin1String("cache"))
         return;
-    QString path = folder.trimmed();
-    if (path.startsWith(QLatin1String("file:")))
-        path = QUrl(path).toLocalFile();
-    path = path.isEmpty() ? QString() : QDir::cleanPath(QDir::fromNativeSeparators(path));
-    if (!path.isEmpty()) {
-        const QFileInfo info(path);
-#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
-        const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
-#else
-        const Qt::CaseSensitivity cs = Qt::CaseSensitive;
-#endif
-        const QString data = QDir::cleanPath(m_paths.data);
-        if (!info.isAbsolute() || info.isRoot()) {
-            emit toast(QStringLiteral("Choisissez un dossier précis (pas la racine d'un disque)"), true);
-            return;
-        }
-        if (path.compare(data, cs) == 0 || path.startsWith(data + "/", cs)) {
-            emit toast(QStringLiteral("Ce dossier appartient déjà à Orpheus : choisissez-en un autre"), true);
-            return;
-        }
-        // Dossier créé au besoin, puis essai d'écriture (droits, disque en lecture seule…).
-        QTemporaryFile probe(path + "/.orpheus-XXXXXX");
-        if (!QDir().mkpath(path) || !probe.open()) {
-            emit toast(QStringLiteral("Impossible d'écrire dans « %1 »").arg(QDir::toNativeSeparators(path)), true);
-            return;
-        }
+    QString error;
+    const QString path = checkedFolder(folder, &error);
+    if (!error.isEmpty()) {
+        emit toast(error, true);
+        return;
     }
     if (path == p->folder)
         return;
@@ -724,6 +737,12 @@ void Backend::setPlaylistFolder(qint64 id, const QString &folder)
 QString Backend::folderUrl(const QString &path) const
 {
     return QUrl::fromLocalFile(path.isEmpty() ? m_paths.library : path).toString();
+}
+
+QString Backend::localPath(const QString &urlOrPath) const
+{
+    const QString p = urlOrPath.startsWith(QLatin1String("file:")) ? QUrl(urlOrPath).toLocalFile() : urlOrPath;
+    return QDir::toNativeSeparators(p);
 }
 
 void Backend::deletePlaylist(qint64 id)
@@ -766,12 +785,62 @@ void Backend::loadRemote(const QString &kind)
         (kind == "youtube" ? m_remoteYoutube : m_remoteSpotify) = v;
         m_remoteError = err;
         m_remoteLoading = false;
-        emit remoteChanged();
+        markImported();
     };
     if (kind == "youtube")
         m_yt->accountPlaylists(done);
+    else if (m_spotifyWeb->isConnected())
+        m_spotifyWeb->playlists(done);  // compte gratuit accepté
     else
         m_spotify->playlists(done);
+}
+
+void Backend::markImported()
+{
+    // Même clé de source que l'import (Importer::run) : « playlist:<id> » ou l'id YouTube.
+    auto mark = [this](QVariantList &list, bool spotify) {
+        for (QVariant &item : list) {
+            QVariantMap m = item.toMap();
+            const QString url = m.value("url").toString();
+            QString ref;
+            if (spotify) {
+                const auto sp = parseSpotifyUrl(url);
+                ref = url == "spotify:liked" ? QStringLiteral("playlist:liked") : sp.first + ":" + sp.second;
+            } else {
+                ref = m.value("id").toString();
+            }
+            const auto id = m_db.playlistBySource(spotify ? "spotify" : "youtube", ref);
+            m["imported"] = id.has_value();
+            m["playlistId"] = id.value_or(0);
+            item = m;
+        }
+    };
+    mark(m_remoteSpotify, true);
+    mark(m_remoteYoutube, false);
+    emit remoteChanged();
+}
+
+void Backend::importSelection(const QVariantList &items, bool download, const QString &folder)
+{
+    QString error;
+    const QString parent = checkedFolder(folder, &error);
+    if (!error.isEmpty()) {
+        emit toast(error, true);
+        return;
+    }
+    QList<QPair<QString, QString>> list;
+    for (const QVariant &v : items) {
+        const QVariantMap m = v.toMap();
+        list.append({m.value("url").toString(), m.value("title").toString()});
+    }
+    if (list.isEmpty())
+        return;
+    m_db.setSetting("import_download", download ? "true" : "false");
+    if (parent.isEmpty())
+        m_db.removeSetting("import_folder");
+    else
+        m_db.setSetting("import_folder", parent);
+    m_importer->importMany(list, {download, parent});
 }
 
 void Backend::clearJobs()
@@ -792,6 +861,60 @@ void Backend::spotifyLogin()
 void Backend::spotifyLogout()
 {
     m_spotify->logout();
+    emit accountsChanged();
+}
+
+void Backend::spotifyConnectBrowser(const QString &browser)
+{
+    if (m_spotifyConnecting)
+        return;
+    m_db.setSetting("spotify_cookies_browser", browser);
+    m_spotifyConnecting = true;
+    m_spotifyError.clear();
+    emit accountsChanged();
+    emit toast(QStringLiteral("Lecture de la session Spotify dans %1…").arg(browser), false);
+    m_yt->browserCookie(browser, "spotify.com", "sp_dc", [this, browser](QString value, QString err) {
+        if (!err.isEmpty()) {
+#ifdef Q_OS_WIN
+            // Chrome/Edge/Brave chiffrent leurs cookies sous Windows (yt-dlp ne peut pas les lire).
+            if (browser != QLatin1String("firefox"))
+                err += QStringLiteral(". Sous Windows, utilisez Firefox, ou collez la valeur du cookie sp_dc");
+#endif
+            finishSpotifyConnect(err);
+            return;
+        }
+        m_spotifyWeb->connectCookie(value, browser, [this](QString e) { finishSpotifyConnect(e); });
+    });
+}
+
+void Backend::spotifyConnectCookie(const QString &value)
+{
+    if (m_spotifyConnecting)
+        return;
+    m_spotifyConnecting = true;
+    m_spotifyError.clear();
+    emit accountsChanged();
+    m_spotifyWeb->connectCookie(value, "manual", [this](QString e) { finishSpotifyConnect(e); });
+}
+
+void Backend::finishSpotifyConnect(const QString &error)
+{
+    m_spotifyConnecting = false;
+    m_spotifyError = error;
+    emit toast(error.isEmpty() ? QStringLiteral("Compte Spotify connecté") : error, !error.isEmpty());
+    if (error.isEmpty()) {
+        // Les playlists affichées venaient peut-être de l'autre méthode de connexion.
+        m_remoteSpotify.clear();
+        emit remoteChanged();
+    }
+    emit accountsChanged();
+}
+
+void Backend::spotifySessionLogout()
+{
+    m_spotifyWeb->logout();
+    m_remoteSpotify.clear();
+    emit remoteChanged();
     emit accountsChanged();
 }
 

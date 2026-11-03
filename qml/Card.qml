@@ -31,6 +31,7 @@ Rectangle {
             font.pixelSize: 13
             wrapMode: Text.WordWrap
             textFormat: Text.StyledText
+            linkColor: OTheme.accent
             Layout.fillWidth: true
             onLinkActivated: (link) => Qt.openUrlExternally(link)
         }
