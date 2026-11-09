@@ -13,7 +13,10 @@ constexpr char kCtxToString[] = "(Landroid/content/Context;)Ljava/lang/String;";
 
 jobject context()
 {
-    return QNativeInterface::QAndroidApplication::context().object();
+    // Référence gardée toute la vie de l'application : celle d'un objet temporaire serait
+    // libérée avant l'appel Java (Context nul côté Java).
+    static const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    return ctx.object();
 }
 
 QString callString(const char *method)
