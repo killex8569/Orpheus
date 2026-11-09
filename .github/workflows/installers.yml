@@ -374,9 +374,12 @@ jobs:
           adb install -r dist/*.apk || exit 1
           adb logcat -c
           adb shell am start -W -n $pkg/org.qtproject.qt.android.bindings.QtActivity
-          for i in $(seq 1 24); do
+          # yt-dlp détecté au démarrage, puis de nouveau après sa mise à jour (ou un échec).
+          for i in $(seq 1 48); do
             sleep 5
-            adb logcat -d | grep -q "yt-dlp retenu\|yt-dlp (Android) indisponible" && break
+            log="$(adb logcat -d)"
+            [ "$(echo "$log" | grep -c "yt-dlp retenu")" -ge 2 ] && break
+            echo "$log" | grep -q "yt-dlp (Android) indisponible\|mise à jour de yt-dlp impossible" && break
           done
           sleep 5
           adb exec-out screencap -p > screenshot-android.png
@@ -386,7 +389,8 @@ jobs:
             echo "::error::Orpheus s'est arrêté"; grep -E "FATAL|AndroidRuntime|DEBUG" logcat.txt | tail -60; exit 1
           fi
           grep -q "yt-dlp retenu" logcat.txt || { echo "::error::yt-dlp (Python embarqué) n'a pas répondu"; exit 1; }
-          echo "Orpheus démarré, yt-dlp opérationnel"
+          if grep "mise à jour de yt-dlp impossible" logcat.txt; then echo "::error::mise à jour de yt-dlp impossible"; exit 1; fi
+          echo "Orpheus démarré, yt-dlp opérationnel et à jour : $(grep "yt-dlp retenu" logcat.txt | tail -1 | sed 's/.*retenu : //')"
           SH
 
       - name: Test (installation, démarrage)
