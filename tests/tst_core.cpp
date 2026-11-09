@@ -443,6 +443,23 @@ private slots:
         QCOMPARE(cleanFileName("AC/DC: Live? <2026>. "), QString("AC DC Live 2026"));
     }
 
+    void ytdlpInstallWithoutCurl()
+    {
+        // curl absent : la mise à jour doit quand même répondre (échec), pas rester muette.
+        QTemporaryDir dir;
+        const QByteArray path = qgetenv("PATH");
+        qputenv("PATH", "");
+        YtDlp yt(dir.path());
+        bool called = false, ok = true;
+        yt.updateManaged([&](QString, bool success) {
+            called = true;
+            ok = success;
+        });
+        qputenv("PATH", path);
+        QTRY_VERIFY_WITH_TIMEOUT(called, 20000);
+        QVERIFY(!ok);
+    }
+
     void spotifyWebParsing()
     {
         // Empreintes des requêtes dans le code du lecteur web.

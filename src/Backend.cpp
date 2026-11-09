@@ -19,7 +19,13 @@ Backend::Backend(const Paths &paths, QObject *parent)
 {
 }
 
-Backend::~Backend() = default;
+Backend::~Backend()
+{
+    // Quitter le Jam tant que le lecteur existe : sinon ~JamSession le fait après la
+    // destruction de Player (objet frère détruit avant), d'où un plantage à la fermeture.
+    if (m_jam)
+        m_jam->leave();
+}
 
 bool Backend::init(QString *error)
 {

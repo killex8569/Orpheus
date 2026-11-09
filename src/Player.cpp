@@ -122,8 +122,11 @@ void Player::finishListening()
 
 Player::~Player()
 {
-    if (m_mpv)
+    if (m_mpv) {
+        // Plus de réveil depuis le thread de mpv pendant la destruction.
+        mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
         mpv_terminate_destroy(m_mpv);
+    }
 }
 
 std::optional<Track> Player::current() const
@@ -459,8 +462,9 @@ void Player::prev()
 void Player::toggle()
 {
     if (m_source.isEmpty()) {
-        if (m_index >= 0 && !m_loading)
-            load(m_index, true);
+        // File remplie par « Ajouter à la file » sans morceau en cours : on part du premier.
+        if (!m_loading)
+            load(qMax(0, m_index), true);
         return;
     }
     const char *args[] = {"cycle", "pause", nullptr};

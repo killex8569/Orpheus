@@ -520,11 +520,12 @@ void SpotifyWeb::pagedTracks(const QString &op, const QJsonObject &vars, bool us
     };
     auto st = std::make_shared<State>();
     auto step = std::make_shared<std::function<void()>>();
+    std::weak_ptr<std::function<void()>> weak = step;  // pas de cycle (fuite)
     *step = [=, this] {
         QJsonObject v = vars;
         v["offset"] = st->offset;
         v["limit"] = pageSize;
-        query(op, v, user, [=](QJsonObject data, QString err) {
+        query(op, v, user, [=, step = weak.lock()](QJsonObject data, QString err) {
             if (!err.isEmpty()) {
                 cb(st->name, {}, err);
                 return;

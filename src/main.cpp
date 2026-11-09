@@ -42,7 +42,8 @@ int main(int argc, char *argv[])
     std::setlocale(LC_NUMERIC, "C");
 
     // Une seule instance : la seconde réveille la première puis se ferme.
-    const QString serverName = QStringLiteral("orpheus-%1").arg(qgetenv("USER"));
+    // USER n'existe pas sous Windows (USERNAME) : sans lui, tous les comptes partageraient l'instance.
+    const QString serverName = QStringLiteral("orpheus-%1").arg(qEnvironmentVariable("USER", qEnvironmentVariable("USERNAME")));
     {
         QLocalSocket probe;
         probe.connectToServer(serverName);

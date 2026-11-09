@@ -39,7 +39,7 @@ JamController::JamController(Database *db, Player *player, const Paths *paths, Q
 
 QString JamController::myName() const
 {
-    QString def = qEnvironmentVariable("USER");
+    QString def = qEnvironmentVariable("USER", qEnvironmentVariable("USERNAME"));  // USERNAME : Windows
     if (!def.isEmpty())
         def[0] = def[0].toUpper();
     return m_db->setting("jam_name", def);

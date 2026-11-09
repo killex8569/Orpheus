@@ -137,7 +137,3 @@ Hidden folders: on Windows, `AppData` is hidden: press `Win + R` and type `%LOCA
 | `tests/` | unit tests (`./build/orpheus_tests`) |
 
 Development tools (environment variables): `ORPHEUS_HOME=<dir>` (separate data), `ORPHEUS_DEMO_SEARCH="query"` (searches and plays the first result), `ORPHEUS_DEMO_IMPORT=<url>`, `ORPHEUS_SCREENSHOT=out.png` (captures the window after `ORPHEUS_SCREENSHOT_DELAY` ms, then quits), `ORPHEUS_VIEW=jam` or `ORPHEUS_VIEW=playlist:<id>` (view shown at startup). On KDE, add `QT_FORCE_STDERR_LOGGING=1` to see the logs in the terminal.
-test
-test
-test
-test

@@ -309,6 +309,13 @@ void YtDlp::version(std::function<void(QString)> cb)
         cb(QString::fromUtf8(p->readAllStandardOutput()).trimmed());
         p->deleteLater();
     });
+    // Sans démarrage, finished n'est jamais émis.
+    connect(p, &QProcess::errorOccurred, this, [p, cb](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart) {
+            p->deleteLater();
+            cb({});
+        }
+    });
     p->start(m_bin, {"--version"});
 }
 
@@ -341,14 +348,17 @@ void YtDlp::findMatch(const QString &artist, const QString &title, double durati
     if (!artist.isEmpty())
         queries << artist + " " + title + " audio";
     // Essaie les requêtes l'une après l'autre jusqu'à une correspondance fiable.
+    // La fonction ne se référence que faiblement (sinon cycle → fuite) ; chaque recherche
+    // en cours la garde en vie.
     auto attempt = std::make_shared<std::function<void(int)>>();
-    *attempt = [this, queries, artist, title, duration, cb, attempt](int i) {
+    std::weak_ptr<std::function<void(int)>> weak = attempt;
+    *attempt = [this, queries, artist, title, duration, cb, weak](int i) {
         if (i >= queries.size()) {
             cb(std::nullopt, {});
             return;
         }
         // Le score compare aux titres bruts des vidéos pour repérer live, covers, remix…
-        searchRaw(queries[i], 8, [=](QList<Track> tracks, QList<Matcher::Candidate> cands, QString err) {
+        searchRaw(queries[i], 8, [=, attempt = weak.lock()](QList<Track> tracks, QList<Matcher::Candidate> cands, QString err) {
             if (!err.isEmpty()) {
                 cb(std::nullopt, err);
                 return;
@@ -580,26 +590,37 @@ void YtDlp::updateManaged(std::function<void(QString, bool)> cb)
     if (QFileInfo(target).isExecutable()) {
         // Copie déjà installée : mise à jour par yt-dlp lui-même.
         auto *p = new QProcess(this);
-        connect(p, &QProcess::finished, this, [this, p, cb](int code) {
+        auto onDone = [this, p, cb](int code) {
             const QString out = QString::fromUtf8(p->readAllStandardOutput() + p->readAllStandardError()).trimmed();
             p->deleteLater();
-            const QString msg = out.split('\n').last();
+            const QString msg = out.isEmpty() ? QStringLiteral("impossible de lancer yt-dlp") : out.split('\n').last();
             selectNewest([cb, msg, code](QString) { cb(msg, code == 0); });
+        };
+        connect(p, &QProcess::finished, this, onDone);
+        connect(p, &QProcess::errorOccurred, this, [onDone](QProcess::ProcessError e) {
+            if (e == QProcess::FailedToStart)
+                onDone(-1);
         });
         p->start(target, {"-U"});
         return;
     }
     // Première installation : binaire officiel (curl est fourni avec Linux, macOS et Windows 10+).
     auto *p = new QProcess(this);
-    connect(p, &QProcess::finished, this, [this, p, cb, target](int code) {
+    auto onDone = [this, p, cb, target](int code) {
         p->deleteLater();
         if (code != 0 || !QFileInfo::exists(target)) {
             QFile::remove(target);
-            selectNewest([cb](QString) { cb(QStringLiteral("téléchargement de yt-dlp impossible"), false); });
+            selectNewest([cb](QString) { cb(QStringLiteral("téléchargement de yt-dlp impossible (curl est-il installé ?)"), false); });
             return;
         }
         QFile::setPermissions(target, QFile::permissions(target) | QFileDevice::ExeOwner | QFileDevice::ExeUser);
         selectNewest([cb](QString v) { cb(QStringLiteral("yt-dlp %1 installé").arg(v), true); });
+    };
+    connect(p, &QProcess::finished, this, onDone);
+    // curl absent : finished n'est jamais émis, le rappel doit quand même arriver.
+    connect(p, &QProcess::errorOccurred, this, [onDone](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart)
+            onDone(-1);
     });
     p->start("curl", {"-fsSL", "--max-time", "120", "-o", target,
                       kManagedUrl});

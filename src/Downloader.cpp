@@ -137,7 +137,10 @@ void Downloader::start(qint64 id, bool priority)
             }
         },
         [this, id](YtDlp::DownloadResult r, QString err) { onDone(id, r, err); });
-    m_active[id].process = a.process;
+    // Échec immédiat (Windows : yt-dlp introuvable) : onDone a déjà retiré l'entrée,
+    // m_active[id] la recréerait et bloquerait ce morceau pour toujours.
+    if (auto it = m_active.find(id); it != m_active.end())
+        it->process = a.process;
 }
 
 void Downloader::onDone(qint64 id, const YtDlp::DownloadResult &r, const QString &err)

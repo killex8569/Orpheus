@@ -103,8 +103,10 @@ void Spotify::login(std::function<void(QString)> cb)
         cb(QStringLiteral("renseignez d'abord le Client ID Spotify"));
         return;
     }
-    if (m_server)
+    if (m_server) {
+        m_server->close();  // libère le port 8765 tout de suite (deleteLater est différé)
         m_server->deleteLater();
+    }
     m_server = new QTcpServer(this);
     if (!m_server->listen(QHostAddress::LocalHost, 8765)) {
         cb(QStringLiteral("impossible d'écouter sur le port 8765 (déjà utilisé ?)"));
@@ -305,8 +307,9 @@ void Spotify::paged(const QString &url, std::function<void(QList<QJsonObject>, Q
 {
     auto items = std::make_shared<QList<QJsonObject>>();
     auto step = std::make_shared<std::function<void(QString)>>();
-    *step = [this, items, cb, step](QString next) {
-        get(next, [items, cb, step](QJsonObject v, QString err) {
+    std::weak_ptr<std::function<void(QString)>> weak = step;  // pas de cycle (fuite)
+    *step = [this, items, cb, weak](QString next) {
+        get(next, [items, cb, step = weak.lock()](QJsonObject v, QString err) {
             if (!err.isEmpty()) {
                 cb({}, err);
                 return;
