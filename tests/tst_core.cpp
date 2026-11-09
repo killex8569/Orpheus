@@ -446,6 +446,9 @@ private slots:
     void ytdlpInstallWithoutCurl()
     {
         // curl absent : la mise à jour doit quand même répondre (échec), pas rester muette.
+#ifdef Q_OS_WIN
+        QSKIP("Windows trouve curl.exe dans System32 même sans PATH : absence impossible à simuler");
+#endif
         QTemporaryDir dir;
         const QByteArray path = qgetenv("PATH");
         qputenv("PATH", "");
