@@ -216,8 +216,7 @@ void YtDlp::selectNewest(std::function<void(QString)> cb)
             }
             if (--st->pending == 0) {
                 if (!st->best.isEmpty()) {
-                    if (st->best != m_bin)
-                        qInfo() << "yt-dlp retenu :" << st->best << st->bestVersion;
+                    qInfo() << "yt-dlp retenu :" << st->best << st->bestVersion;
                     m_bin = st->best;
                 }
                 cb(st->bestVersion);
