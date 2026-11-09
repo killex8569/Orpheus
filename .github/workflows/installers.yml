@@ -1,4 +1,4 @@
-# Installeurs Windows (.exe), macOS (.dmg) et paquet Fedora (.rpm).
+# Installeurs Windows (.exe), macOS (.dmg), paquet Fedora (.rpm) et APK Android.
 #
 # - Tag « v* » poussé : construit les installeurs et les ajoute à la release du tag
 #   (créée si elle n'existe pas encore).
@@ -19,6 +19,7 @@ on:
       - 'icons/**'
       - 'CMakeLists.txt'
       - 'packaging/**'
+      - 'android/**'
       - '.github/workflows/installers.yml'
   workflow_dispatch:
 
@@ -272,10 +273,84 @@ jobs:
             orpheus.log
           if-no-files-found: ignore
 
+  android:
+    name: Android arm64 (.apk)
+    runs-on: ubuntu-latest
+    env:
+      QT_VERSION: 6.8.3
+      NDK_VERSION: 26.1.10909125  # NDK des bibliothèques Qt 6.8 officielles
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Version
+        id: version
+        run: echo "version=$(sed -n 's/^project(orpheus VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)" >> "$GITHUB_OUTPUT"
+
+      # Qt pour Android, plus le Qt de la machine (outils moc, qmlcachegen… exécutés à la compilation).
+      - name: Qt ${{ env.QT_VERSION }} (Android + hôte)
+        run: |
+          pip install -q aqtinstall==3.3.0
+          aqt install-qt linux desktop "$QT_VERSION" linux_gcc_64 -O "$RUNNER_TEMP/Qt"
+          aqt install-qt all_os android "$QT_VERSION" android_arm64_v8a -m qtmultimedia -O "$RUNNER_TEMP/Qt"
+
+      - name: SDK et NDK Android
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          echo "BUILD_TOOLS=$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_ENV"
+
+      - name: Compilation (APK)
+        run: |
+          "$RUNNER_TEMP/Qt/$QT_VERSION/android_arm64_v8a/bin/qt-cmake" -S . -B build-android -G Ninja -Wno-dev \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQT_HOST_PATH="$RUNNER_TEMP/Qt/$QT_VERSION/gcc_64" \
+            -DANDROID_SDK_ROOT="$ANDROID_HOME" \
+            -DANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
+          cmake --build build-android --target apk
+          find build-android -name '*.apk'
+
+      # Clé de signature permanente (secrets du dépôt) : sans elle, une clé jetable rend l'APK
+      # installable, mais une version suivante ne pourra pas s'installer par-dessus.
+      - name: Signature
+        env:
+          V: ${{ steps.version.outputs.version }}
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [[ -n $KEYSTORE_B64 ]]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          else
+            echo "::warning::secret ANDROID_KEYSTORE_BASE64 absent : APK signé avec une clé jetable (voir le README)"
+            KS_PASS=orpheus-temp KEY_ALIAS=orpheus
+            keytool -genkeypair -keystore "$RUNNER_TEMP/release.jks" -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 \
+              -validity 10000 -storepass "$KS_PASS" -keypass "$KS_PASS" -dname "CN=Orpheus"
+          fi
+          unsigned="$(find build-android -name '*-release-unsigned.apk' | head -1)"
+          [[ -n $unsigned ]] || { echo "::error::APK non signé introuvable"; exit 1; }
+          mkdir -p dist
+          "$BUILD_TOOLS/zipalign" -p -f 4 "$unsigned" "$RUNNER_TEMP/aligned.apk"
+          KS_PASS="$KS_PASS" "$BUILD_TOOLS/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-key-alias "${KEY_ALIAS:-orpheus}" \
+            --ks-pass env:KS_PASS --key-pass env:KS_PASS --out "dist/Orpheus-$V-android-arm64.apk" "$RUNNER_TEMP/aligned.apk"
+          "$BUILD_TOOLS/apksigner" verify --print-certs "dist/Orpheus-$V-android-arm64.apk" | head -3
+          # Python, yt-dlp, QuickJS et ffmpeg de youtubedl-android doivent être dans l'APK.
+          unzip -l "dist/Orpheus-$V-android-arm64.apk" | grep -E "lib/arm64-v8a/lib(python|qjs|ffmpeg|ssl|crypto)" || { echo "::error::bibliothèques natives manquantes"; exit 1; }
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orpheus-android
+          path: dist/*.apk
+          if-no-files-found: error
+
   release:
     name: Ajout à la release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, macos, linux-test]
+    needs: [windows, macos, linux-test, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write

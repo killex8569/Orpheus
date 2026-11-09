@@ -18,6 +18,8 @@ QtObject {
     readonly property color err: "#f87171"
     readonly property int radius: 10
     readonly property string font: "Inter"
+    // Téléphone (Android) : tiroir au lieu de la barre latérale, lecteur compact, gestes tactiles.
+    readonly property bool mobile: Qt.platform.os === "android"
 
     function icon(name) { return "qrc:/qt/qml/Orpheus/icons/" + name + ".svg" }
 }

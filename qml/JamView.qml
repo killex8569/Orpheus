@@ -80,7 +80,8 @@ Item {
                 title: "Votre nom"
                 subtitle: "Affiché aux autres participants."
                 Field {
-                    Layout.preferredWidth: 280
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 280
                     text: root.jam.myName
                     placeholderText: "ex. Alex"
                     maximumLength: 40
@@ -93,12 +94,13 @@ Item {
                 subtitle: "Vous devenez l'hôte. Tout le monde peut ajouter des morceaux, mettre en pause ou passer au suivant, pour tous à la fois. "
                           + "Vos amis rejoignent avec le nom du Jam et le code à 4 chiffres : pas d'adresse IP à taper."
                 GridLayout {
-                    columns: 2
+                    columns: OTheme.mobile ? 1 : 2
                     columnSpacing: 12
                     rowSpacing: 10
                     Text { text: "Nom du Jam"; color: OTheme.text; font.pixelSize: 14 }
                     Field {
                         id: createName
+                        Layout.fillWidth: OTheme.mobile
                         Layout.preferredWidth: 280
                         placeholderText: root.jam.defaultJamName
                         maximumLength: 40
@@ -182,6 +184,7 @@ Item {
                     spacing: 10
                     Field {
                         id: addr
+                        Layout.fillWidth: OTheme.mobile
                         Layout.preferredWidth: 260
                         placeholderText: "ex. Soirée chez Alex, ou 192.168.1.20"
                         maximumLength: 80
@@ -293,6 +296,7 @@ Item {
                 implicitHeight: 32
             }
             Text {
+                visible: !OTheme.mobile
                 text: "En retard sur les autres (ex. casque Bluetooth) ? Augmentez la valeur."
                 color: OTheme.muted; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
@@ -329,8 +333,9 @@ Item {
             Layout.fillHeight: true
             spacing: 18
 
-            // File commune.
+            // File commune (téléphone : remplacée par les résultats pendant une recherche).
             ColumnLayout {
+                visible: !(OTheme.mobile && root.searchOpen)
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.preferredWidth: 1

@@ -61,7 +61,7 @@ public:
     Q_INVOKABLE void joinDiscovered(int index, const QString &code);
     Q_INVOKABLE bool isValidCode(const QString &code) const { return Jam::isValidCode(code); }
     Q_INVOKABLE void leave();
-    Q_INVOKABLE void setDiscovering(bool on) { m_session.setDiscovering(on); }
+    Q_INVOKABLE void setDiscovering(bool on);
 
     // Commandes relayées par Backend pendant un Jam (elles s'appliquent à tous).
     // Renvoie le nombre de morceaux envoyés (ceux déjà en cours ou à venir sont ignorés).
@@ -91,6 +91,7 @@ private:
     void onStateChanged();
     void tick();
     void setStatus(const QString &s);
+    void updateMulticast();
     Track trackFor(const Jam::Item &item);
 
     JamSession m_session;
@@ -106,6 +107,7 @@ private:
     qint64 m_endedTrack = 0;         // morceau arrivé à sa fin (en attente du suivant)
     int m_latencyMs = 0;
     bool m_wasActive = false;
+    bool m_discovering = false;
     // Recherche par nom en attente de réponse.
     enum class Pending { None, Create, Join } m_pending = Pending::None;
     QString m_pendingName, m_pendingCode;

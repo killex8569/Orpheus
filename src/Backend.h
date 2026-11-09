@@ -231,6 +231,8 @@ public:
     Q_INVOKABLE bool settingBool(const QString &key, bool def) const { return m_db.settingBool(key, def); }
     Q_INVOKABLE void setSetting(const QString &key, const QString &value);
     Q_INVOKABLE void copyText(const QString &text);
+    // Android, bouton Retour pendant la lecture : arrière-plan au lieu de quitter.
+    Q_INVOKABLE void moveTaskToBack();
 
 signals:
     void playlistsChanged();

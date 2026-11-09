@@ -18,12 +18,15 @@ Item {
             Text { text: "Titre, artiste, ou lien YouTube"; color: OTheme.muted; font.pixelSize: 14 }
         }
 
-        RowLayout {
-            spacing: 10
+        GridLayout {
+            columns: 3
+            columnSpacing: 10
+            rowSpacing: 10
             Layout.fillWidth: true
             TextField {
                 id: field
                 Layout.fillWidth: true
+                Layout.columnSpan: OTheme.mobile ? 3 : 1
                 implicitHeight: 42
                 placeholderText: "Que voulez-vous écouter ?"
                 placeholderTextColor: OTheme.muted
@@ -32,7 +35,7 @@ Item {
                 leftPadding: 44
                 selectByMouse: true
                 onAccepted: root.run()
-                Component.onCompleted: forceActiveFocus()
+                Component.onCompleted: if (!OTheme.mobile) forceActiveFocus()
                 background: Rectangle {
                     radius: 21
                     color: OTheme.panel2
@@ -75,6 +78,7 @@ Item {
                 }
             }
             PillButton { text: "Chercher"; primary: true; implicitHeight: 42; onClicked: root.run() }
+            Item { visible: OTheme.mobile; Layout.fillWidth: true }  // téléphone : le champ prend toute la largeur
         }
 
         RowLayout {
@@ -135,6 +139,7 @@ Item {
                 }
                 Text {
                     visible: backend.searchResults.count === 0 && backend.localResults.count === 0 && backend.searchError === ""
+                             && !OTheme.mobile  // raccourcis clavier
                     Layout.topMargin: 40
                     Layout.alignment: Qt.AlignHCenter
                     text: "Astuce : Ctrl+K pour rechercher depuis n'importe où, Espace pour lecture / pause."

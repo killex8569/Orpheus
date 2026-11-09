@@ -3,16 +3,10 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QRandomGenerator>
-#include <mpv/client.h>
+
+#include "AudioEngine.h"
 
 namespace {
-
-// Encode une valeur d'option mpv sans risque avec les virgules (`%longueur%valeur`).
-QByteArray mpvQuote(const QString &s)
-{
-    const QByteArray u = s.toUtf8();
-    return "%" + QByteArray::number(u.size()) + "%" + u;
-}
 
 // Délai avant de basculer en streaming si le téléchargement prioritaire traîne.
 constexpr int kStreamFallbackMs = 12000;
@@ -23,37 +17,34 @@ Player::Player(Database *db, Downloader *dl, YtDlp *yt, QObject *parent)
     : QObject(parent), m_db(db), m_dl(dl), m_yt(yt)
 {
     m_volume = m_db->setting("volume", "80").toDouble();
-    m_mpv = mpv_create();
-    if (!m_mpv)
-        qFatal("libmpv : création impossible");
-    auto opt = [this](const char *k, const QByteArray &v) { mpv_set_option_string(m_mpv, k, v.constData()); };
-    opt("vid", "no");
-    opt("video", "no");
-    opt("vo", "null");
-    opt("idle", "yes");
-    opt("ytdl", "no");
-    opt("terminal", "no");
-    opt("input-default-bindings", "no");
-    opt("audio-display", "no");
-    opt("gapless-audio", "weak");
-    opt("cache", "yes");
-    opt("demuxer-max-bytes", "64MiB");
-    opt("audio-client-name", "Orpheus");
-    opt("volume", QByteArray::number(m_volume));
-    if (m_db->settingBool("audio_exclusive", false))
-        opt("audio-exclusive", "yes");
-    if (const QString dev = m_db->setting("audio_device"); !dev.isEmpty())
-        opt("audio-device", dev.toUtf8());
-    if (mpv_initialize(m_mpv) < 0)
-        qFatal("libmpv : initialisation impossible");
-    mpv_observe_property(m_mpv, 1, "pause", MPV_FORMAT_FLAG);
-    mpv_observe_property(m_mpv, 2, "duration", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(m_mpv, 3, "volume", MPV_FORMAT_DOUBLE);
-    // mpv réveille l'application depuis son propre thread : on traite les événements
-    // dans la boucle Qt principale.
-    mpv_set_wakeup_callback(
-        m_mpv, [](void *ctx) { QMetaObject::invokeMethod(static_cast<Player *>(ctx), &Player::onMpvEvents, Qt::QueuedConnection); },
-        this);
+    m_engine = AudioEngine::create(m_db, m_volume, this);
+    connect(m_engine, &AudioEngine::pausedChanged, this, [this](bool paused) {
+        m_paused = paused;
+        emit stateChanged();
+    });
+    connect(m_engine, &AudioEngine::durationChanged, this, [this](double d) {
+        m_duration = d;
+        emit stateChanged();
+    });
+    connect(m_engine, &AudioEngine::volumeChanged, this, [this](double v) {
+        m_volume = v;
+        emit stateChanged();
+    });
+    connect(m_engine, &AudioEngine::loaded, this, [this] {
+        qInfo() << "lecture démarrée (" << m_source << ")";
+        m_loading = false;
+        m_consecutiveErrors = 0;
+        m_status.clear();
+        emit stateChanged();
+        prefetchNext();
+    });
+    connect(m_engine, &AudioEngine::restarted, this, &Player::seeked);
+    connect(m_engine, &AudioEngine::finished, this, [this](bool error, const QString &message) {
+        if (error)
+            onPlaybackError(message);
+        else
+            advance(true);
+    });
 
     connect(m_dl, &Downloader::finished, this, &Player::onDownloadFinished);
     m_streamFallback.setSingleShot(true);
@@ -122,11 +113,7 @@ void Player::finishListening()
 
 Player::~Player()
 {
-    if (m_mpv) {
-        // Plus de réveil depuis le thread de mpv pendant la destruction.
-        mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
-        mpv_terminate_destroy(m_mpv);
-    }
+    delete m_engine;  // avant les membres qu'il pourrait encore signaler
 }
 
 std::optional<Track> Player::current() const
@@ -138,10 +125,7 @@ std::optional<Track> Player::current() const
 
 double Player::position() const
 {
-    double pos = 0;
-    if (!m_source.isEmpty())
-        mpv_get_property(m_mpv, "time-pos", MPV_FORMAT_DOUBLE, &pos);
-    return pos;
+    return m_source.isEmpty() ? 0 : m_engine->position();
 }
 
 void Player::setStatus(const QString &s)
@@ -154,56 +138,6 @@ void Player::bumpQueue()
 {
     ++m_queueVersion;
     emit queueChanged();
-}
-
-// ---------- Événements mpv ----------
-
-void Player::onMpvEvents()
-{
-    while (m_mpv) {
-        mpv_event *ev = mpv_wait_event(m_mpv, 0);
-        if (ev->event_id == MPV_EVENT_NONE)
-            break;
-        switch (ev->event_id) {
-        case MPV_EVENT_PROPERTY_CHANGE: {
-            auto *p = static_cast<mpv_event_property *>(ev->data);
-            if (!p->data)
-                break;
-            const QByteArray name(p->name);
-            if (name == "pause" && p->format == MPV_FORMAT_FLAG)
-                m_paused = *static_cast<int *>(p->data);
-            else if (name == "duration" && p->format == MPV_FORMAT_DOUBLE)
-                m_duration = *static_cast<double *>(p->data);
-            else if (name == "volume" && p->format == MPV_FORMAT_DOUBLE)
-                m_volume = *static_cast<double *>(p->data);
-            emit stateChanged();
-            break;
-        }
-        case MPV_EVENT_FILE_LOADED:
-            qInfo() << "lecture démarrée (" << m_source << ")";
-            m_loading = false;
-            m_consecutiveErrors = 0;
-            m_status.clear();
-            emit stateChanged();
-            prefetchNext();
-            break;
-        case MPV_EVENT_PLAYBACK_RESTART:
-            emit seeked();
-            break;
-        case MPV_EVENT_END_FILE: {
-            auto *e = static_cast<mpv_event_end_file *>(ev->data);
-            if (e->playlist_entry_id != m_entryId)
-                break;  // fin d'un morceau déjà remplacé
-            if (e->reason == MPV_END_FILE_REASON_EOF)
-                advance(true);
-            else if (e->reason == MPV_END_FILE_REASON_ERROR)
-                onPlaybackError(QString::fromUtf8(mpv_error_string(e->error)));
-            break;
-        }
-        default:
-            break;
-        }
-    }
 }
 
 // ---------- Chargement ----------
@@ -243,8 +177,7 @@ void Player::load(int index, bool resetRetry)
         return;
     }
     // Arrête le morceau précédent pendant le chargement.
-    const char *stop[] = {"stop", nullptr};
-    mpv_command_async(m_mpv, 0, stop);
+    m_engine->stop();
     m_source.clear();
     if (m_db->settingBool("auto_cache", true)) {
         // Un seul transfert : on télécharge en priorité puis on lit le fichier.
@@ -299,28 +232,14 @@ void Player::loadFile(const QString &target, const QString &source, const QStrin
     if (!t)
         return;
     const QString title = t->artist.isEmpty() ? t->title : t->artist + " — " + t->title;
-    QByteArray opts = "force-media-title=" + mpvQuote(title);
-    if (!userAgent.isEmpty())
-        opts += ",user-agent=" + mpvQuote(userAgent);
-    const QByteArray file = target.toUtf8();
-    const char *args[] = {"loadfile", file.constData(), "replace", "-1", opts.constData(), nullptr};
-    mpv_node result;
-    if (mpv_command_ret(m_mpv, args, &result) < 0) {
-        onPlaybackError(QStringLiteral("mpv a refusé le fichier"));
+    // En pilotage externe, le départ est donné à l'heure convenue par le Jam.
+    if (!m_engine->load(target, title, userAgent, m_external)) {
+        onPlaybackError(QStringLiteral("le lecteur a refusé le fichier"));
         return;
     }
-    if (result.format == MPV_FORMAT_NODE_MAP) {
-        for (int i = 0; i < result.u.list->num; ++i)
-            if (qstrcmp(result.u.list->keys[i], "playlist_entry_id") == 0)
-                m_entryId = result.u.list->values[i].u.int64;
-    }
-    mpv_free_node_contents(&result);
     m_source = source;
     m_status.clear();
-    // En pilotage externe, le départ est donné à l'heure convenue par le Jam.
-    int pause = m_external ? 1 : 0;
-    mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &pause);
-    m_paused = pause;
+    m_paused = m_external;
     m_db->markStarted(t->id);
     m_listenTrack = t->id;
     emit stateChanged();
@@ -467,23 +386,20 @@ void Player::toggle()
             load(qMax(0, m_index), true);
         return;
     }
-    const char *args[] = {"cycle", "pause", nullptr};
-    mpv_command_async(m_mpv, 0, args);
+    m_engine->togglePause();
 }
 
 void Player::seek(double pos)
 {
     if (m_source.isEmpty())
         return;
-    const QByteArray p = QByteArray::number(qMax(0.0, pos));
-    const char *args[] = {"seek", p.constData(), "absolute+exact", nullptr};
-    mpv_command_async(m_mpv, 0, args);
+    m_engine->seek(qMax(0.0, pos));
 }
 
 void Player::setVolume(double v)
 {
     m_volume = qBound(0.0, v, 130.0);
-    mpv_set_property_async(m_mpv, 0, "volume", MPV_FORMAT_DOUBLE, &m_volume);
+    m_engine->setVolume(m_volume);
     m_volumeSave.start();
     emit stateChanged();
 }
@@ -619,8 +535,7 @@ void Player::setPaused(bool paused)
 {
     if (m_source.isEmpty() || paused == m_paused)
         return;
-    int flag = paused ? 1 : 0;
-    mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &flag);
+    m_engine->setPaused(paused);
     m_paused = paused;
     emit stateChanged();
 }
@@ -631,7 +546,7 @@ void Player::setSpeed(double speed)
     if (qAbs(speed - m_speed) < 0.001)
         return;
     m_speed = speed;
-    mpv_set_property_async(m_mpv, 0, "speed", MPV_FORMAT_DOUBLE, &m_speed);
+    m_engine->setSpeed(m_speed);
 }
 
 void Player::stop()
@@ -640,8 +555,7 @@ void Player::stop()
     ++m_generation;
     m_waitingDownload = 0;
     m_streamFallback.stop();
-    const char *args[] = {"stop", nullptr};
-    mpv_command_async(m_mpv, 0, args);
+    m_engine->stop();
     m_source.clear();
     m_loading = false;
     m_status.clear();

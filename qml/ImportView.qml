@@ -92,6 +92,7 @@ ScrollView {
             onToggled: rl.download = checked
         }
         RowLayout {
+            visible: !OTheme.mobile  // dossier au choix : ordinateur seulement
             Layout.fillWidth: true
             spacing: 8
             Icon { iconName: "disk"; size: 14; color: OTheme.muted }
@@ -139,10 +140,12 @@ ScrollView {
 
         ColumnLayout {
             spacing: 2
+            Layout.fillWidth: true
             Text { text: "Importer"; color: OTheme.text; font.pixelSize: 28; font.weight: Font.Bold }
             Text {
                 text: "Les morceaux sont retrouvés sur YouTube, ajoutés au cache local et téléchargés."
                 color: OTheme.muted; font.pixelSize: 14
+                wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
         }
 
@@ -208,6 +211,7 @@ ScrollView {
                     text: parent.found > 0 ? parent.found + " lien(s) de morceau détecté(s)" : "Aucun lien détecté pour le moment"
                     color: OTheme.muted
                     font.pixelSize: 12
+                    wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
                 PillButton {
@@ -222,6 +226,7 @@ ScrollView {
         }
 
         Card {
+            visible: !OTheme.mobile  // cookies d'un navigateur d'ordinateur
             title: "Mon compte YouTube"
             subtitle: scroll.ytBrowser === ""
                       ? "Choisissez dans les paramètres le navigateur dans lequel vous êtes connecté à YouTube."
@@ -315,7 +320,7 @@ ScrollView {
                         }
                     }
                     Rectangle {
-                        Layout.preferredWidth: 180
+                        Layout.preferredWidth: OTheme.mobile ? 60 : 180
                         implicitHeight: 6
                         radius: 3
                         color: OTheme.panel2

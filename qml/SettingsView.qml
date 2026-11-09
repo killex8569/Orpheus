@@ -83,6 +83,7 @@ ScrollView {
         property string icon
         property string help
         Layout.topMargin: 14
+        Layout.fillWidth: true
         spacing: 2
         RowLayout {
             spacing: 10
@@ -114,8 +115,9 @@ ScrollView {
 
         ColumnLayout {
             spacing: 2
+            Layout.fillWidth: true
             Text { text: "Paramètres"; color: OTheme.text; font.pixelSize: 28; font.weight: Font.Bold }
-            Text { text: "Données : " + backend.dataDir; color: OTheme.muted; font.pixelSize: 13 }
+            Text { text: "Données : " + backend.dataDir; color: OTheme.muted; font.pixelSize: 13; elide: Text.ElideMiddle; Layout.fillWidth: true }
         }
 
         // ---------- Spotify ----------
@@ -180,7 +182,9 @@ ScrollView {
                 Layout.fillWidth: true
                 Layout.topMargin: 4
 
+                // Ordinateur : cookie lu dans le navigateur. Téléphone : collé à la main (ci-dessous).
                 RowLayout {
+                    visible: !OTheme.mobile
                     spacing: 12
                     Layout.fillWidth: true
                     StepNumber { n: 1 }
@@ -192,6 +196,7 @@ ScrollView {
                                  onClicked: Qt.openUrlExternally("https://open.spotify.com") }
                 }
                 RowLayout {
+                    visible: !OTheme.mobile
                     spacing: 12
                     Layout.fillWidth: true
                     StepNumber { n: 2 }
@@ -208,6 +213,7 @@ ScrollView {
                     Item { Layout.fillWidth: true }
                 }
                 RowLayout {
+                    visible: !OTheme.mobile
                     spacing: 12
                     Layout.fillWidth: true
                     StepNumber { n: 3 }
@@ -249,16 +255,18 @@ ScrollView {
 
                 // Solution de secours : valeur du cookie collée à la main.
                 Text {
+                    visible: !OTheme.mobile
                     text: (scroll.showManualCookie ? "▾ " : "▸ ") + "Ça ne marche pas ? Collez la valeur du cookie à la main"
                     color: OTheme.accent; font.pixelSize: 13
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: scroll.showManualCookie = !scroll.showManualCookie }
                 }
                 ColumnLayout {
-                    visible: scroll.showManualCookie
+                    visible: scroll.showManualCookie || OTheme.mobile
                     spacing: 6
                     Layout.fillWidth: true
                     Text {
-                        text: "Dans le navigateur connecté à open.spotify.com : F12 → Stockage (Firefox) ou Application (Chrome, Brave, Edge) "
+                        text: (OTheme.mobile ? "Sur un ordinateur, dans le navigateur" : "Dans le navigateur")
+                              + " connecté à open.spotify.com : F12 → Stockage (Firefox) ou Application (Chrome, Brave, Edge) "
                               + "→ Cookies → https://open.spotify.com → ligne « sp_dc » : copiez sa valeur, puis collez-la ici."
                         color: OTheme.muted; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
                     }
@@ -350,8 +358,9 @@ ScrollView {
 
         Card {
             title: "Recherche"
-            RowLayout {
-                spacing: 12
+            GridLayout {
+                columns: OTheme.mobile ? 1 : 2
+                columnSpacing: 12
                 Text { text: "Source par défaut"; color: OTheme.text; font.pixelSize: 14 }
                 Choice { key: "search_source"; options: [["youtube", "YouTube"], ["spotify", "Spotify (application développeur requise)"]] }
             }
@@ -431,8 +440,9 @@ ScrollView {
             Toggle { key: "prefetch"; def: true; label: "Préparer le morceau suivant"
                      help: "Télécharge le prochain morceau de la file pendant l'écoute : transition instantanée." }
             Toggle { key: "import_download"; def: true; label: "Télécharger les morceaux importés" }
-            RowLayout {
-                spacing: 12
+            GridLayout {
+                columns: OTheme.mobile ? 1 : 2
+                columnSpacing: 12
                 Text { text: "Téléchargements simultanés en arrière-plan"; color: OTheme.text; font.pixelSize: 14 }
                 Choice {
                     key: "parallel_downloads"
@@ -445,8 +455,9 @@ ScrollView {
                       + "En cas d'erreurs « 403 » ou de vérification anti-robot, revenez à 1."
                 color: OTheme.muted; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
-            RowLayout {
-                spacing: 12
+            GridLayout {
+                columns: OTheme.mobile ? 1 : 2
+                columnSpacing: 12
                 Text { text: "Taille maximale du cache (Mo, 0 = illimité)"; color: OTheme.text; font.pixelSize: 14 }
                 Field { key: "cache_max_mb"; placeholderText: "20480"; implicitWidth: 110; validator: IntValidator { bottom: 0 } }
             }
@@ -457,6 +468,7 @@ ScrollView {
         }
 
         Card {
+            visible: !OTheme.mobile  // cookies d'un navigateur d'ordinateur
             title: "Compte YouTube"
             subtitle: "Orpheus lit les cookies de votre navigateur (ils ne sont envoyés qu'à YouTube) pour accéder à vos playlists, vos titres « J'aime » et à l'audio Premium."
             RowLayout {
@@ -477,6 +489,7 @@ ScrollView {
         }
 
         Card {
+            visible: !OTheme.mobile  // réglages de libmpv
             title: "Sortie audio"
             subtitle: "Appliqué au prochain démarrage d'Orpheus."
             Toggle { key: "audio_exclusive"; def: false; label: "Mode exclusif"

@@ -10,13 +10,16 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Network Test)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Network)
 # MPRIS (contrôle depuis le bureau) passe par D-Bus : Linux uniquement.
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT APPLE AND NOT ANDROID)
     set(ORPHEUS_MPRIS ON)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
 endif()
-if(WIN32)
+if(ANDROID)
+    # Pas de libmpv sous Android : lecture par Qt Multimedia. Svg : icônes de l'interface.
+    find_package(Qt6 REQUIRED COMPONENTS Multimedia Svg)
+elseif(WIN32)
     # MSYS2 : pkg-config y renvoie des chemins « /ucrt64/… » illisibles pour CMake ;
     # libmpv est donc cherchée directement (préfixe du compilateur MinGW).
     find_path(MPV_INCLUDE_DIR mpv/client.h REQUIRED)
@@ -49,6 +52,9 @@ add_library(orpheus_core STATIC
     src/Jam.cpp
     src/UpdateChecker.cpp
 )
+if(ANDROID)
+    target_sources(orpheus_core PRIVATE src/AndroidBridge.cpp)
+endif()
 target_include_directories(orpheus_core PUBLIC src)
 # Mises à jour : version locale (celle du projet) comparée à la dernière release GitHub.
 set(ORPHEUS_REPO "killex8569/Orpheus" CACHE STRING "Dépôt GitHub dont les releases sont suivies")
@@ -69,8 +75,31 @@ qt_add_executable(orpheus
     src/TrackModel.cpp
     src/Backend.cpp
     src/JamController.cpp
+    src/AudioEngine.h
 )
-target_link_libraries(orpheus PRIVATE orpheus_core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 PkgConfig::MPV)
+target_link_libraries(orpheus PRIVATE orpheus_core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2)
+if(ANDROID)
+    target_sources(orpheus PRIVATE src/AudioEngineQt.cpp src/AndroidMedia.cpp)
+    target_link_libraries(orpheus PRIVATE Qt6::Multimedia Qt6::Svg)
+    # Manifeste, build.gradle (youtubedl-android), code Java et icônes : dossier android/.
+    math(EXPR ORPHEUS_VERSION_CODE "${PROJECT_VERSION_MAJOR} * 10000 + ${PROJECT_VERSION_MINOR} * 100 + ${PROJECT_VERSION_PATCH}")
+    set_target_properties(orpheus PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/android
+        QT_ANDROID_VERSION_NAME ${PROJECT_VERSION}
+        QT_ANDROID_VERSION_CODE ${ORPHEUS_VERSION_CODE}
+        QT_ANDROID_TARGET_SDK_VERSION 35)
+    # HTTPS (Spotify, paroles, mises à jour) : Qt n'embarque pas OpenSSL sous Android.
+    include(FetchContent)
+    FetchContent_Declare(android_openssl
+        DOWNLOAD_EXTRACT_TIMESTAMP true
+        URL https://github.com/KDAB/android_openssl/archive/refs/heads/master.zip)
+    FetchContent_MakeAvailable(android_openssl)
+    include(${android_openssl_SOURCE_DIR}/android_openssl.cmake)
+    add_android_openssl_libraries(orpheus)
+else()
+    target_sources(orpheus PRIVATE src/AudioEngineMpv.cpp)
+    target_link_libraries(orpheus PRIVATE PkgConfig::MPV)
+endif()
 target_compile_options(orpheus PRIVATE -Wall -Wextra)
 if(ORPHEUS_MPRIS)
     target_sources(orpheus PRIVATE src/Mpris.cpp)
@@ -153,16 +182,21 @@ qt_add_qml_module(orpheus
     RESOURCES ${ICONS}
 )
 
-install(TARGETS orpheus RUNTIME DESTINATION bin BUNDLE DESTINATION .)
-if(UNIX AND NOT APPLE)
+if(NOT ANDROID)
+    install(TARGETS orpheus RUNTIME DESTINATION bin BUNDLE DESTINATION .)
+endif()
+if(UNIX AND NOT APPLE AND NOT ANDROID)
     # Entrée du menu des applications et icône (paquets Linux : RPM…).
     include(GNUInstallDirs)
     install(FILES packaging/linux/orpheus.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES icons/orpheus.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 endif()
 
-# Tests unitaires du cœur.
-enable_testing()
-qt_add_executable(orpheus_tests tests/tst_core.cpp)
-target_link_libraries(orpheus_tests PRIVATE orpheus_core Qt6::Test)
-add_test(NAME core COMMAND orpheus_tests)
+# Tests unitaires du cœur (sur ordinateur ; l'APK Android n'en a pas besoin).
+if(NOT ANDROID)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    enable_testing()
+    qt_add_executable(orpheus_tests tests/tst_core.cpp)
+    target_link_libraries(orpheus_tests PRIVATE orpheus_core Qt6::Test)
+    add_test(NAME core COMMAND orpheus_tests)
+endif()

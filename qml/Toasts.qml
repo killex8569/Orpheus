@@ -27,7 +27,7 @@ Column {
             Text {
                 id: label
                 anchors.centerIn: parent
-                width: Math.min(implicitWidth, 604)
+                width: Math.min(implicitWidth, 604, root.width - 68)
                 text: toast.message
                 color: OTheme.text
                 font.pixelSize: 13

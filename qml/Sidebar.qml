@@ -174,7 +174,7 @@ Rectangle {
             boundsBehavior: Flickable.StopAtBounds
             // Pas de défilement par glisser : il volerait le geste du glisser-déposer.
             // La molette (WheelScroll) et la barre de défilement restent disponibles.
-            interactive: false
+            interactive: OTheme.mobile  // au doigt, défilement ; réordonner passe par l'appui long
             ScrollBar.vertical: ScrollBar {}
             WheelScroll {}
 
@@ -211,11 +211,12 @@ Rectangle {
                     count: slot.modelData.trackCount
                     active: slot.active
                     onClicked: root.navigate("playlist", slot.modelData.id)
+                    onPressAndHold: plMenu.popup()
 
                     // Les gestionnaires sont sur la ligne elle-même : posés sur son conteneur,
                     // ils ne verraient jamais l'appui, déjà pris par le bouton.
                     DragHandler {
-                        enabled: !playlistsHeader.collapsed
+                        enabled: !playlistsHeader.collapsed && !OTheme.mobile
                         target: null
                         xAxis.enabled: false
                         onActiveChanged: {

@@ -21,6 +21,7 @@ Item {
 
         ColumnLayout {
             spacing: 2
+            Layout.fillWidth: true  // sinon une ligne longue élargit toute la vue (écran étroit)
             Text {
                 text: ({
                     "cache": "Morceaux écoutés, conservés en local — consultée avant toute recherche en ligne",
@@ -29,6 +30,8 @@ Item {
                 })[root.p.kind] || "Playlist locale"
                 color: OTheme.muted
                 font.pixelSize: 12
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
             }
             Text { text: root.p.name || ""; color: OTheme.text; font.pixelSize: 28; font.weight: Font.Bold
                    elide: Text.ElideRight; Layout.fillWidth: true }
@@ -37,10 +40,12 @@ Item {
                       + (root.p.readyCount || 0) + " en local · " + (root.p.diskSizeText || "0 octet")
                 color: OTheme.muted
                 font.pixelSize: 14
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
             }
             // Dossier des fichiers de la playlist (« Cache local » : toujours la bibliothèque).
             RowLayout {
-                visible: !root.isCache
+                visible: !root.isCache && !OTheme.mobile
                 Layout.topMargin: 6
                 Layout.fillWidth: true
                 spacing: 8

@@ -9,9 +9,9 @@
 #include "Downloader.h"
 #include "YtDlp.h"
 
-struct mpv_handle;
+class AudioEngine;
 
-// Lecteur audio basé sur libmpv (intégré au processus).
+// Lecteur audio (moteur : libmpv sur ordinateur, Qt Multimedia sous Android).
 // Stratégie de chargement d'un morceau :
 //  1. fichier local présent → lecture immédiate ;
 //  2. sinon téléchargement prioritaire (un seul transfert, ~2-4 s) puis lecture locale ;
@@ -85,7 +85,6 @@ signals:
     void endReached(qint64 trackId);
 
 private:
-    void onMpvEvents();
     void load(int index, bool resetRetry);
     void loadFile(const QString &target, const QString &source, const QString &userAgent = {});
     void startStreaming(quint64 generation);
@@ -104,7 +103,7 @@ private:
     Database *m_db;
     Downloader *m_dl;
     YtDlp *m_yt;
-    mpv_handle *m_mpv = nullptr;
+    AudioEngine *m_engine = nullptr;
 
     QList<Track> m_queue;
     QList<Track> m_unshuffled;  // ordre d'origine quand le mode aléatoire est actif
@@ -118,7 +117,6 @@ private:
     QString m_source;  // "local" | "stream" | "" (arrêté)
     QString m_status;
     quint64 m_generation = 0;
-    qint64 m_entryId = -1;
     qint64 m_waitingDownload = 0;
     int m_consecutiveErrors = 0;
     bool m_retried = false;

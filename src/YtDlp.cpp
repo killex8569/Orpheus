@@ -16,6 +16,9 @@
 
 #include "Matcher.h"
 #include "Paths.h"
+#ifdef Q_OS_ANDROID
+#include "AndroidBridge.h"
+#endif
 
 namespace {
 
@@ -134,6 +137,15 @@ YtDlp::YtDlp(const QString &managedDir, QObject *parent) : QObject(parent), m_ma
 void YtDlp::redetect()
 {
     m_candidates.clear();
+#ifdef Q_OS_ANDROID
+    // Une seule copie : celle de youtubedl-android, utilisable une fois décompressée.
+    const auto launch = AndroidBridge::ytdlpLaunch();
+    if (m_androidReady && QFileInfo::exists(launch.script))
+        m_candidates << launch.script;
+    m_bin = m_candidates.value(0);
+    m_jsRuntime = "quickjs:" + launch.quickjs;
+    return;
+#endif
     auto add = [this](const QString &path) {
         if (path.isEmpty() || !QFileInfo(path).isExecutable())
             return;
@@ -162,6 +174,20 @@ void YtDlp::redetect()
 
 void YtDlp::selectNewest(std::function<void(QString)> cb)
 {
+#ifdef Q_OS_ANDROID
+    if (!m_androidReady) {
+        AndroidBridge::initYtDlp(this, [this, cb](QString err) {
+            if (!err.isEmpty()) {
+                qWarning() << "yt-dlp (Android) indisponible :" << err;
+                cb({});
+                return;
+            }
+            m_androidReady = true;
+            selectNewest(cb);
+        });
+        return;
+    }
+#endif
     redetect();
     if (m_candidates.isEmpty()) {
         m_bin.clear();
@@ -207,13 +233,28 @@ void YtDlp::selectNewest(std::function<void(QString)> cb)
         auto *timer = new QTimer(p);
         timer->setSingleShot(true);
         connect(timer, &QTimer::timeout, p, [p] { p->kill(); });
-        p->start(bin, {"--version"});
+        startProcess(p, bin, {"--version"});
         timer->start(15000);
     }
 }
 
+void YtDlp::startProcess(QProcess *p, const QString &bin, const QStringList &args) const
+{
+#ifdef Q_OS_ANDROID
+    Q_UNUSED(bin);
+    const auto launch = AndroidBridge::ytdlpLaunch();
+    p->setProcessEnvironment(launch.env);
+    p->start(launch.python, QStringList{launch.script} + launch.extraArgs + args);
+#else
+    p->start(bin, args);
+#endif
+}
+
 bool YtDlp::isManaged() const
 {
+#ifdef Q_OS_ANDROID
+    return true;
+#endif
     return m_bin == m_managedDir + "/" + kManagedName;
 }
 
@@ -294,7 +335,7 @@ void YtDlp::runJson(const QStringList &args, int timeoutMs, std::function<void(Q
         p->deleteLater();
         cb({}, QStringLiteral("impossible de lancer yt-dlp"));
     });
-    p->start(m_bin, baseArgs() + args);
+    startProcess(p, m_bin, baseArgs() + args);
     timer->start(timeoutMs);
 }
 
@@ -316,7 +357,7 @@ void YtDlp::version(std::function<void(QString)> cb)
             cb({});
         }
     });
-    p->start(m_bin, {"--version"});
+    startProcess(p, m_bin, {"--version"});
 }
 
 void YtDlp::searchRaw(const QString &query, int limit, std::function<void(QList<Track>, QList<Matcher::Candidate>, QString)> cb)
@@ -520,7 +561,7 @@ QProcess *YtDlp::download(const QString &ytId, const QString &libraryDir, const 
         p->deleteLater();
         done({}, QStringLiteral("impossible de lancer yt-dlp"));
     });
-    p->start(m_bin, args);
+    startProcess(p, m_bin, args);
     timer->start(15 * 60 * 1000);
     return p;
 }
@@ -536,6 +577,10 @@ void YtDlp::browserCookie(const QString &browser, const QString &domain, const Q
         cb({}, QStringLiteral("choisissez un navigateur"));
         return;
     }
+#ifdef Q_OS_ANDROID
+    cb({}, QStringLiteral("cookies du navigateur illisibles sous Android : collez la valeur du cookie sp_dc"));
+    return;
+#endif
     // Dossier temporaire privé (0700) : le fichier contient tous les cookies du navigateur.
     auto dir = std::make_shared<QTemporaryDir>();
     if (!dir->isValid()) {
@@ -586,6 +631,13 @@ void YtDlp::browserCookie(const QString &browser, const QString &domain, const Q
 
 void YtDlp::updateManaged(std::function<void(QString, bool)> cb)
 {
+#ifdef Q_OS_ANDROID
+    // Mise à jour par youtubedl-android (dernière version stable de yt-dlp).
+    AndroidBridge::updateYtDlp(this, [this, cb](QString msg, bool ok) {
+        selectNewest([cb, msg, ok](QString) { cb(msg, ok); });
+    });
+    return;
+#endif
     const QString target = m_managedDir + "/" + kManagedName;
     if (QFileInfo(target).isExecutable()) {
         // Copie déjà installée : mise à jour par yt-dlp lui-même.

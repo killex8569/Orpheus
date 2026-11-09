@@ -69,6 +69,9 @@ ListView {
         leftPadding: 4
         rightPadding: 6
         onDoubleClicked: backend.play(list.listName, index)
+        // Téléphone : un appui lit le morceau, un appui long ouvre le menu.
+        onClicked: if (OTheme.mobile) backend.play(list.listName, index)
+        onPressAndHold: list.openMenu(index)
 
         background: Rectangle {
             radius: 8
@@ -85,6 +88,7 @@ ListView {
             opacity: row.marked && !row.hovered ? 0.4 : 1
 
             Item {
+                visible: !OTheme.mobile  // numéro de ligne : place gagnée pour le titre
                 Layout.leftMargin: 8
                 Layout.preferredWidth: 24
                 Layout.fillHeight: true
@@ -203,7 +207,7 @@ ListView {
             IconButton {
                 iconName: "more"
                 tip: "Plus d'actions"
-                opacity: row.hovered || row.current ? 1 : 0
+                opacity: row.hovered || row.current || OTheme.mobile ? 1 : 0
                 Layout.rightMargin: 6
                 onClicked: list.openMenu(row.index)
             }

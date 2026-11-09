@@ -11,7 +11,12 @@ Paths Paths::resolve()
     if (!custom.isEmpty()) {
         p.data = QString::fromLocal8Bit(custom);
     } else {
+#ifdef Q_OS_ANDROID
+        // GenericDataLocation y désigne le stockage partagé, interdit en écriture (Android 11+).
+        p.data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/orpheus";
+#else
         p.data = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/orpheus";
+#endif
     }
     p.library = p.data + "/library";
     p.covers = p.data + "/covers";

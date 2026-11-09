@@ -29,7 +29,7 @@ AbstractButton {
             color: root.active ? OTheme.accent : (root.hovered ? root.activeColor : root.color)
         }
     }
-    ToolTip.visible: tip !== "" && hovered
+    ToolTip.visible: tip !== "" && hovered && !OTheme.mobile
     ToolTip.text: tip
     ToolTip.delay: 600
 }

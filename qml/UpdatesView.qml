@@ -16,6 +16,7 @@ ScrollView {
 
         ColumnLayout {
             spacing: 2
+            Layout.fillWidth: true
             Text { text: "Mises à jour"; color: OTheme.text; font.pixelSize: 28; font.weight: Font.Bold }
             Text {
                 text: "Orpheus vérifie une fois au lancement s'il existe une version plus récente parmi les releases GitHub."
@@ -125,7 +126,7 @@ ScrollView {
         Card {
             visible: scroll.up.updateAvailable && scroll.up.updateCommand === ""
             title: "Installer la mise à jour"
-            subtitle: "Téléchargez l'installeur de la nouvelle version dans la release (.exe pour Windows, .dmg pour macOS, .rpm pour Fedora), puis ouvrez-le : "
+            subtitle: "Téléchargez l'installeur de la nouvelle version dans la release (.exe pour Windows, .dmg pour macOS, .rpm pour Fedora, .apk pour Android), puis ouvrez-le : "
                       + "il remplace la version actuelle sans toucher à vos morceaux ni à vos playlists. Fermez Orpheus avant. "
                       + "Fedora : sudo dnf install ./orpheus-*.rpm"
             PillButton {

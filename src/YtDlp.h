@@ -69,6 +69,8 @@ signals:
 
 private:
     QStringList baseArgs() const;
+    // Lance yt-dlp (`bin`) ; sous Android, par le Python embarqué (AndroidBridge).
+    void startProcess(QProcess *p, const QString &bin, const QStringList &args) const;
     // Désactive les cookies si l'erreur vient de leur lecture ; true si c'est le cas.
     bool dropBrokenCookies(const QString &stderrText);
     void runJson(const QStringList &args, int timeoutMs, std::function<void(QJsonDocument, QString)> cb);
@@ -80,6 +82,9 @@ private:
     QString m_jsRuntime;  // « deno:/chemin » ou « node:/chemin »
     QString m_cookiesBrowser;
     bool m_cookiesBroken = false;
+#ifdef Q_OS_ANDROID
+    bool m_androidReady = false;  // Python et yt-dlp décompressés (youtubedl-android)
+#endif
 };
 
 QString ytdlpError(const QString &stderrText);

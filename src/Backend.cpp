@@ -12,6 +12,9 @@
 #include <algorithm>
 
 #include "Matcher.h"
+#ifdef Q_OS_ANDROID
+#include "AndroidBridge.h"
+#endif
 
 Backend::Backend(const Paths &paths, QObject *parent)
     : QObject(parent), m_paths(paths), m_search(&m_paths), m_local(&m_paths), m_playlistTracks(&m_paths), m_queue(&m_paths),
@@ -958,6 +961,13 @@ void Backend::setSetting(const QString &key, const QString &value)
 void Backend::copyText(const QString &text)
 {
     QGuiApplication::clipboard()->setText(text);
+}
+
+void Backend::moveTaskToBack()
+{
+#ifdef Q_OS_ANDROID
+    AndroidBridge::moveTaskToBack();
+#endif
 }
 
 // ---------- Paroles ----------

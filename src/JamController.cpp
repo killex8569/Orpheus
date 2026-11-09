@@ -2,6 +2,9 @@
 
 #include <QDebug>
 #include <QRegularExpression>
+#ifdef Q_OS_ANDROID
+#include "AndroidBridge.h"
+#endif
 
 namespace {
 // Écarts tolérés avant un saut (au-dessous : rattrapage par la vitesse).
@@ -203,6 +206,21 @@ void JamController::leave()
     m_session.leave();
 }
 
+void JamController::setDiscovering(bool on)
+{
+    m_discovering = on;
+    m_session.setDiscovering(on);
+    updateMulticast();
+}
+
+void JamController::updateMulticast()
+{
+#ifdef Q_OS_ANDROID
+    // Sans ce verrou, le Wi-Fi d'Android filtre les annonces et recherches de Jams.
+    AndroidBridge::setMulticastLock(m_discovering || active());
+#endif
+}
+
 void JamController::onRoleChanged()
 {
     const bool nowActive = active();
@@ -224,6 +242,7 @@ void JamController::onRoleChanged()
         setStatus({});
     }
     m_wasActive = nowActive;
+    updateMulticast();
     emit changed();
 }
 

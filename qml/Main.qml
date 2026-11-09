@@ -6,8 +6,8 @@ ApplicationWindow {
     id: win
     width: 1280
     height: 820
-    minimumWidth: 860
-    minimumHeight: 540
+    minimumWidth: OTheme.mobile ? 0 : 860
+    minimumHeight: OTheme.mobile ? 0 : 540
     visible: true
     title: backend.hasTrack ? backend.title + " — Orpheus" : "Orpheus"
     color: OTheme.bg
@@ -56,8 +56,61 @@ ApplicationWindow {
             backend.openPlaylist(id)
         playlistId = id
         view = v
-        if (v === "search")
+        if (drawer.item)
+            drawer.item.close()
+        // Sur téléphone, pas de clavier qui s'ouvre tout seul.
+        if (v === "search" && !OTheme.mobile)
             Qt.callLater(searchView.focusSearch)
+    }
+
+    // Android, bouton Retour : ferme le tiroir, revient à la recherche, puis passe en
+    // arrière-plan si la musique joue (quitter l'arrêterait).
+    onClosing: (close) => {
+        if (!OTheme.mobile)
+            return
+        if (drawer.item && drawer.item.opened) {
+            close.accepted = false
+            drawer.item.close()
+        } else if (view !== "search") {
+            close.accepted = false
+            navigate("search", 0)
+        } else if (backend.hasTrack && !backend.paused) {
+            close.accepted = false
+            backend.moveTaskToBack()
+        }
+    }
+
+    // ---------- Téléphone : barre du haut et tiroir ----------
+    header: ToolBar {
+        visible: OTheme.mobile
+        height: visible ? 52 : 0
+        background: Rectangle { color: OTheme.panel }
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 4
+            anchors.rightMargin: 12
+            spacing: 6
+            IconButton { iconName: "menu"; iconSize: 22; tip: "Menu"; onClicked: drawer.item.open() }
+            Image { source: OTheme.icon("orpheus"); sourceSize: Qt.size(48, 48)
+                    Layout.preferredWidth: 24; Layout.preferredHeight: 24 }
+            Text { text: "Orpheus"; color: OTheme.text; font.pixelSize: 18; font.weight: Font.DemiBold; Layout.fillWidth: true }
+        }
+    }
+    Loader {
+        id: drawer
+        active: OTheme.mobile
+        sourceComponent: Drawer {
+            width: Math.min(300, win.width * 0.85)
+            height: win.height
+            background: Rectangle { color: OTheme.panel }
+            Sidebar {
+                anchors.fill: parent
+                view: win.view
+                playlistId: win.playlistId
+                onNavigate: (v, id) => win.navigate(v, id)
+                onNewPlaylist: { drawer.item.close(); win.askNewPlaylist("", -1) }
+            }
+        }
     }
 
     // ---------- Dialogues ----------
@@ -89,7 +142,7 @@ ApplicationWindow {
         id: nameDialog
         anchors.centerIn: parent
         modal: true
-        width: 380
+        width: Math.min(380, win.width - 32)
         standardButtons: Dialog.Ok | Dialog.Cancel
         onOpened: nameField.forceActiveFocus()
         background: Rectangle { radius: 12; color: OTheme.panel2; border.color: OTheme.border }
@@ -121,7 +174,7 @@ ApplicationWindow {
         property string name
         anchors.centerIn: parent
         modal: true
-        width: 400
+        width: Math.min(400, win.width - 32)
         standardButtons: Dialog.Yes | Dialog.No
         background: Rectangle { radius: 12; color: OTheme.panel2; border.color: OTheme.border }
         header: Text { text: "Supprimer la playlist ?"; color: OTheme.text; font.pixelSize: 17; font.weight: Font.DemiBold; padding: 18; bottomPadding: 0 }
@@ -164,6 +217,7 @@ ApplicationWindow {
         spacing: 0
 
         Sidebar {
+            visible: !OTheme.mobile
             Layout.preferredWidth: 250
             Layout.fillHeight: true
             view: win.view
@@ -175,7 +229,7 @@ ApplicationWindow {
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: 28
+            Layout.margins: OTheme.mobile ? 12 : 28
             Layout.bottomMargin: 8
             currentIndex: ["search", "playlist", "queue", "import", "settings", "lyrics", "stats", "jam", "updates"].indexOf(win.view)
 
@@ -197,7 +251,7 @@ ApplicationWindow {
     PlayerBar {
         id: player
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-        height: 92
+        height: OTheme.mobile ? 112 : 92
         lyricsOpen: win.view === "lyrics"
         onToggleLyrics: win.toggleLyrics()
     }

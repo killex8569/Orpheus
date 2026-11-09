@@ -1,6 +1,6 @@
 # Orpheus
 
-Native music player for Linux, in **C++ / Qt 6 (QML)**, with playback through **libmpv**, a smart local cache, and imports from YouTube and Spotify.
+Native music player for Linux, Windows, macOS and Android, in **C++ / Qt 6 (QML)**, with playback through **libmpv** (Qt Multimedia on Android), a smart local cache, and imports from YouTube and Spotify.
 
 ## Install
 
@@ -37,6 +37,24 @@ Download the installer from the [latest release](https://github.com/killex8569/O
 - **macOS 15+ (Apple Silicon)**: `Orpheus-x.y.z-macos-arm64.dmg`, then drag Orpheus into Applications. The app is not notarized by Apple: on first launch, open it, then go to System Settings → Privacy & Security → "Open Anyway".
 
 To update, run the new installer: your tracks and playlists are kept (see [Data](#data) for where they live). No MPRIS outside Linux; media keys work while the window has focus.
+
+### Android
+
+Download `Orpheus-x.y.z-android-arm64.apk` from the [latest release](https://github.com/killex8569/Orpheus/releases/latest) on the phone, open it and allow the installation (Android 9 or later, 64-bit ARM). yt-dlp, Python, ffmpeg and a JavaScript engine (QuickJS) are bundled through [youtubedl-android](https://github.com/JunkFood02/youtubedl-android); the first launch unpacks them (a few seconds). yt-dlp is updated from Paramètres → yt-dlp.
+
+On a phone, the sidebar becomes a drawer (☰), a tap plays a track and a long press opens its menu. Playback goes on in the background, with a notification and lock-screen and headset controls; the Back key goes back to the search, then sends Orpheus to the background while music plays.
+
+Not available on Android: browser cookies (paste the Spotify `sp_dc` cookie in Paramètres instead; no "Mon compte YouTube"), a folder per playlist (files stay in the app's private storage), and the audio output settings.
+
+Builds: the APK is built by the `android` job of `.github/workflows/installers.yml` (Qt 6.8 for Android, NDK r26b). To sign every release with the same key (needed to install an update over the previous version), create a keystore once and add three repository secrets:
+
+```bash
+keytool -genkeypair -keystore orpheus.jks -alias orpheus -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 orpheus.jks   # → secret ANDROID_KEYSTORE_BASE64
+# secrets ANDROID_KEYSTORE_PASSWORD (the keystore password) and ANDROID_KEY_ALIAS (orpheus)
+```
+
+Without them, the job signs with a throwaway key and says so: the APK installs, but the next one must be installed after uninstalling the previous one (which deletes the app's data).
 
 The installers are built by `.github/workflows/installers.yml` (MSYS2 + Inno Setup on Windows, Homebrew + macdeployqt on macOS, `packaging/linux/orpheus.spec` in a Fedora container for the RPM). Each one is installed and launched on a clean system before the release. Pushing a `v*` tag attaches them to the release.
 
@@ -105,6 +123,7 @@ Your tracks, playlists and settings live in a data folder of their own, never in
 | Linux | `~/.local/share/orpheus/` | `~/.local/bin/orpheus` |
 | Windows | `%LOCALAPPDATA%\orpheus\` (`C:\Users\<you>\AppData\Local\orpheus\`) | `%LOCALAPPDATA%\Programs\Orpheus\` |
 | macOS | `~/Library/Application Support/orpheus/` | `/Applications/Orpheus.app` |
+| Android | private app storage (`files/orpheus/`) | the app |
 
 `ORPHEUS_HOME=<dir>` uses another data folder (any system).
 
@@ -126,7 +145,9 @@ Hidden folders: on Windows, `AppData` is hidden: press `Win + R` and type `%LOCA
 | File | Role |
 |---|---|
 | `src/Backend.*` | link to QML, track resolution (local first), imports |
-| `src/Player.*` | libmpv, queue, loading strategy |
+| `src/Player.*` | queue, loading strategy |
+| `src/AudioEngine*` | audio playback: libmpv (`AudioEngineMpv.cpp`), Qt Multimedia on Android (`AudioEngineQt.cpp`) |
+| `src/Android*`, `android/` | Android: yt-dlp through youtubedl-android, notification and media controls, manifest and Gradle |
 | `src/Downloader.*` | download queue: priority, spacing, retries, cache limit |
 | `src/YtDlp.*` | async yt-dlp calls |
 | `src/Spotify.*` | OAuth PKCE, Web API, public pages |

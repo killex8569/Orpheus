@@ -16,6 +16,9 @@
 #ifdef ORPHEUS_MPRIS
 #include "Mpris.h"
 #endif
+#ifdef Q_OS_ANDROID
+void setupAndroidMedia(Backend *backend);  // AndroidMedia.cpp
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -81,6 +84,9 @@ int main(int argc, char *argv[])
 #else
     // Windows/macOS : pas de MPRIS, les touches multimédia sont gérées par la fenêtre.
     const bool mprisActive = false;
+#endif
+#ifdef Q_OS_ANDROID
+    setupAndroidMedia(&backend);
 #endif
     engine.rootContext()->setContextProperty("backend", &backend);
     // Avec MPRIS, les touches multimédia passent par le bureau : pas de raccourcis

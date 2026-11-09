@@ -45,9 +45,10 @@ ScrollView {
         spacing: 14
         WheelScroll { flickable: scroll.contentItem }
 
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
-            spacing: 12
+            columns: OTheme.mobile ? 1 : 2
+            columnSpacing: 12
             ColumnLayout {
                 spacing: 2
                 Layout.fillWidth: true
@@ -96,9 +97,11 @@ ScrollView {
         }
 
         // ---------- Chiffres clés ----------
-        RowLayout {
+        GridLayout {
             Layout.fillWidth: true
-            spacing: 12
+            columns: OTheme.mobile ? 2 : 4
+            columnSpacing: 12
+            rowSpacing: 12
             StatTile { label: "Temps d'écoute"; value: scroll.st.time || "0 min" }
             StatTile { label: "Écoutes"; value: scroll.fmt(scroll.st.plays) }
             StatTile { label: "Morceaux différents"; value: scroll.fmt(scroll.st.tracks) }
@@ -141,7 +144,7 @@ ScrollView {
                         text: artistRow.modelData.name
                         color: OTheme.text; font.pixelSize: 14
                         elide: Text.ElideRight
-                        Layout.preferredWidth: 200
+                        Layout.preferredWidth: OTheme.mobile ? 90 : 200
                     }
                     // Barre proportionnelle au nombre d'écoutes (le premier = pleine largeur).
                     Item {
@@ -162,6 +165,7 @@ ScrollView {
                                       + artistRow.modelData.time + ", " + artistRow.modelData.tracks + " morceau(x)"
                     }
                     Text {
+                        visible: !OTheme.mobile  // détail dans l'info-bulle de la barre
                         text: artistRow.modelData.playsText + " · " + artistRow.modelData.time
                         color: OTheme.muted; font.pixelSize: 12
                         horizontalAlignment: Text.AlignRight
