@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<!-- Modèle de Qt 6.8 (qtbase/src/android/templates) + icône, permissions et service de lecture. -->
+<!-- Modèle de Qt 6.8.3 (qtbase/src/android/templates, tag v6.8.3) + icône, permissions et service de lecture. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.killex8569.orpheus"
     android:installLocation="auto"
@@ -36,7 +36,6 @@
             android:label="Orpheus"
             android:launchMode="singleTop"
             android:screenOrientation="unspecified"
-            android:theme="@style/NormalTheme"
             android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>

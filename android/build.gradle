@@ -1,4 +1,4 @@
-// Modèle de Qt 6.8 (qtbase/src/android/templates/build.gradle) + youtubedl-android.
+// Modèle de Qt 6.8.3 (qtbase/src/android/templates/build.gradle, tag v6.8.3) + youtubedl-android.
 buildscript {
     repositories {
         google()
@@ -21,7 +21,7 @@ apply plugin: qtGradlePluginType
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
     //noinspection GradleDependency
-    implementation 'androidx.core:core:1.16.0'
+    implementation 'androidx.core:core:1.13.1'
     // yt-dlp, Python, QuickJS (moteur JavaScript de YouTube) et ffmpeg pour Android.
     implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
     implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
@@ -53,6 +53,8 @@ android {
     // Extract native libraries from the APK
     // (indispensable : libpython.so, libffmpeg.so et libqjs.so sont exécutés depuis ce dossier)
     packagingOptions.jniLibs.useLegacyPackaging true
+    // Archives (Python, ffmpeg) nommées .so pour être livrées dans ce dossier : pas des binaires.
+    packagingOptions.jniLibs.keepDebugSymbols.add('**/*.zip.so')
 
     sourceSets {
         main {
