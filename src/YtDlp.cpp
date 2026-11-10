@@ -218,6 +218,8 @@ void YtDlp::selectNewest(std::function<void(QString)> cb)
                 if (!st->best.isEmpty()) {
                     qInfo() << "yt-dlp retenu :" << st->best << st->bestVersion;
                     m_bin = st->best;
+                } else {
+                    qWarning() << "aucune copie de yt-dlp ne répond :" << m_candidates;
                 }
                 cb(st->bestVersion);
             }
@@ -233,7 +235,8 @@ void YtDlp::selectNewest(std::function<void(QString)> cb)
         timer->setSingleShot(true);
         connect(timer, &QTimer::timeout, p, [p] { p->kill(); });
         startProcess(p, bin, {"--version"});
-        timer->start(15000);
+        // Large : premier lancement sous Android (Python à décompresser), téléphone lent.
+        timer->start(60000);
     }
 }
 
