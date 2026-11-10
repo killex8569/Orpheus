@@ -167,7 +167,13 @@ jobs:
       - name: Test (installation, démarrage)
         run: |
           dmg="$(ls dist/*.dmg)"
-          mnt="$(hdiutil attach -nobrowse -readonly "$dmg" | tail -1 | cut -f3)"
+          # hdiutil échoue parfois sur les runners (« Resource temporarily unavailable ») : nouvel essai.
+          mnt=""
+          for i in 1 2 3 4 5; do
+            mnt="$(hdiutil attach -nobrowse -readonly "$dmg" | tail -1 | cut -f3)" && [[ -n $mnt ]] && break
+            sleep 10
+          done
+          [[ -n $mnt ]] || { echo "::error::image disque impossible à monter"; exit 1; }
           rm -rf "$RUNNER_TEMP/Orpheus.app"
           cp -R "$mnt/Orpheus.app" "$RUNNER_TEMP/Orpheus.app"
           hdiutil detach "$mnt"
