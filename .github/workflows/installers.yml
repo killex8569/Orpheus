@@ -354,7 +354,7 @@ jobs:
           if-no-files-found: error
 
   android-test:
-    name: Android (.apk) — test sur un émulateur
+    name: Android (.apk) — test sur un émulateur Android 15
     needs: android
     runs-on: ubuntu-latest
     steps:
@@ -402,7 +402,7 @@ jobs:
       - name: Test (installation, démarrage)
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 35  # Android 15 (Fairphone 6)
           target: google_apis
           arch: x86_64
           disable-animations: true
