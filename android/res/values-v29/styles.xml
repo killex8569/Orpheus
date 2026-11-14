@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Thème par défaut de Qt 6.8 (Android 10+), sans le plein écran imposé par Android 15 :
+     l'interface ne gère pas les marges des barres système (heure, barre de gestes). -->
+<!-- shortcut: attribut ignoré dès que targetSdk ≥ 36 ; il faudra alors gérer les marges
+     dans le QML (SafeArea, Qt 6.9+). -->
+<resources>
+    <style name="OrpheusTheme" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

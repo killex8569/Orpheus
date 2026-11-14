@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Thème par défaut de Qt 6.8 sous Android 9 (QtActivityBase.onCreate). -->
+<resources>
+    <style name="OrpheusTheme" parent="android:Theme.Holo.Light" />
+</resources>
