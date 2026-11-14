@@ -1,7 +1,7 @@
 # Paquet RPM d'Orpheus (Fedora). Construit par .github/workflows/installers.yml :
-#   rpmbuild -ba -D "orpheus_version 1.2.0" packaging/linux/orpheus.spec
+#   rpmbuild -ba -D "orpheus_version 1.2.1" packaging/linux/orpheus.spec
 # avec l'archive des sources orpheus-<version>.tar.gz dans le dossier SOURCES.
-%{!?orpheus_version: %global orpheus_version 1.2.0}
+%{!?orpheus_version: %global orpheus_version 1.2.1}
 %bcond_without tests
 
 Name:           orpheus
@@ -69,6 +69,11 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/orpheus.desktop
 %{_datadir}/icons/hicolor/scalable/apps/orpheus.svg
 
 %changelog
+* Sun Nov 15 2026 killex8569 - 1.2.1-1
+- Android : APK signé avec une clé permanente (les versions suivantes
+  s'installent par-dessus) ; interface sous les barres système corrigée
+  sous Android 15
+
 * Mon Nov 09 2026 killex8569 - 1.2.0-1
 - Version Android (APK) ; correction d'un plantage à la fermeture pendant un
   Jam et de plusieurs bugs (mise à jour de yt-dlp sans curl, lecture d'une
