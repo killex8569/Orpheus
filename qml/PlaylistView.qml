@@ -34,7 +34,7 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 14
+        spacing: OTheme.mobile ? 8 : 14
 
         ColumnLayout {
             spacing: 2
@@ -50,7 +50,7 @@ Item {
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
-            Text { text: root.p.name || ""; color: OTheme.text; font.pixelSize: 28; font.weight: Font.Bold
+            Text { text: root.p.name || ""; color: OTheme.text; font.pixelSize: OTheme.mobile ? 22 : 28; font.weight: Font.Bold
                    elide: Text.ElideRight; Layout.fillWidth: true }
             Text {
                 text: (root.p.trackCount || 0) + " morceaux · " + (root.p.durationText || "0:00") + " · "
@@ -139,7 +139,7 @@ Item {
             visible: (root.p.trackCount || 0) > 0
             TextField {
                 id: filterField
-                width: Math.min(360, searchSortBar.width)
+                width: OTheme.mobile ? searchSortBar.width : Math.min(360, searchSortBar.width)
                 implicitHeight: 38
                 placeholderText: "Rechercher dans la playlist"
                 placeholderTextColor: OTheme.muted
@@ -177,6 +177,7 @@ Item {
                 onClicked: sortMenu.popup(sortBtn, 0, sortBtn.height + 4)
                 Menu {
                     id: sortMenu
+                    height: Math.min(implicitHeight, ApplicationWindow.window ? ApplicationWindow.window.height * 0.6 : 420)
                     Repeater {
                         model: root.sortOptions
                         delegate: MenuItem {
@@ -199,32 +200,79 @@ Item {
             }
         }
 
-        // Filtrage par style / genre.
-        Flow {
+        // Filtrage par style / genre (une ligne horizontale sur téléphone, multi-lignes bornée sur ordinateur).
+        Flickable {
+            visible: OTheme.mobile && (root.p.trackCount || 0) > 0
             Layout.fillWidth: true
-            spacing: 6
-            visible: (root.p.trackCount || 0) > 0
-            PillButton {
-                text: "Tous"
-                implicitHeight: 28
-                checked: backend.playlistStyleFilter === ""
-                onClicked: backend.setPlaylistStyleFilter("")
-            }
-            Repeater {
-                model: backend.playlistStyles
-                delegate: PillButton {
-                    required property var modelData
+            Layout.preferredHeight: 34
+            contentWidth: mobileStyleRow.implicitWidth
+            contentHeight: 34
+            flickableDirection: Flickable.HorizontalFlick
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            Row {
+                id: mobileStyleRow
+                spacing: 6
+                PillButton {
+                    text: "Tous"
                     implicitHeight: 28
-                    text: modelData.name + " (" + modelData.count + ")"
-                    checked: backend.playlistStyleFilter.toLowerCase() === modelData.name.toLowerCase()
-                    onClicked: backend.setPlaylistStyleFilter(modelData.name)
+                    checked: backend.playlistStyleFilter === ""
+                    onClicked: backend.setPlaylistStyleFilter("")
+                }
+                Repeater {
+                    model: backend.playlistStyles
+                    delegate: PillButton {
+                        required property var modelData
+                        implicitHeight: 28
+                        text: modelData.name + " (" + modelData.count + ")"
+                        checked: backend.playlistStyleFilter.toLowerCase() === modelData.name.toLowerCase()
+                        onClicked: backend.setPlaylistStyleFilter(modelData.name)
+                    }
+                }
+                PillButton {
+                    implicitHeight: 28
+                    iconName: "sync"
+                    text: backend.analyzingStyles ? "Analyse… (" + backend.analyzingStylesRemaining + ")" : "Détecter les styles"
+                    onClicked: backend.analyzePlaylistStyles(root.p.id)
                 }
             }
-            PillButton {
-                implicitHeight: 28
-                iconName: "sync"
-                text: backend.analyzingStyles ? "Analyse des styles… (" + backend.analyzingStylesRemaining + ")" : "Détecter les styles"
-                onClicked: backend.analyzePlaylistStyles(root.p.id)
+        }
+        Flickable {
+            visible: !OTheme.mobile && (root.p.trackCount || 0) > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.min(desktopStyleFlow.implicitHeight, 108)
+            contentWidth: width
+            contentHeight: desktopStyleFlow.implicitHeight
+            flickableDirection: Flickable.VerticalFlick
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            Flow {
+                id: desktopStyleFlow
+                width: parent.width
+                spacing: 6
+                PillButton {
+                    text: "Tous"
+                    implicitHeight: 28
+                    checked: backend.playlistStyleFilter === ""
+                    onClicked: backend.setPlaylistStyleFilter("")
+                }
+                Repeater {
+                    model: backend.playlistStyles
+                    delegate: PillButton {
+                        required property var modelData
+                        implicitHeight: 28
+                        text: modelData.name + " (" + modelData.count + ")"
+                        checked: backend.playlistStyleFilter.toLowerCase() === modelData.name.toLowerCase()
+                        onClicked: backend.setPlaylistStyleFilter(modelData.name)
+                    }
+                }
+                PillButton {
+                    implicitHeight: 28
+                    iconName: "sync"
+                    text: backend.analyzingStyles ? "Analyse des styles… (" + backend.analyzingStylesRemaining + ")" : "Détecter les styles"
+                    onClicked: backend.analyzePlaylistStyles(root.p.id)
+                }
             }
         }
 

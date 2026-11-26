@@ -68,7 +68,16 @@ ApplicationWindow {
     onClosing: (close) => {
         if (!OTheme.mobile)
             return
-        if (drawer.item && drawer.item.opened) {
+        if (styleDialog.opened) {
+            close.accepted = false
+            styleDialog.reject()
+        } else if (nameDialog.opened) {
+            close.accepted = false
+            nameDialog.reject()
+        } else if (deleteDialog.opened) {
+            close.accepted = false
+            deleteDialog.reject()
+        } else if (drawer.item && drawer.item.opened) {
             close.accepted = false
             drawer.item.close()
         } else if (view !== "search") {
@@ -257,17 +266,28 @@ ApplicationWindow {
         ColumnLayout {
             width: parent.width
             spacing: 12
-            Flow {
+            Flickable {
                 Layout.fillWidth: true
-                spacing: 6
-                Repeater {
-                    model: styleDialog.displayedStyles
-                    delegate: PillButton {
-                        required property string modelData
-                        implicitHeight: 30
-                        text: modelData
-                        checked: styleDialog.isSelected(modelData)
-                        onClicked: styleDialog.toggleStyle(modelData)
+                Layout.preferredHeight: Math.min(styleChipsFlow.implicitHeight, Math.max(120, win.height * 0.38))
+                contentWidth: width
+                contentHeight: styleChipsFlow.implicitHeight
+                flickableDirection: Flickable.VerticalFlick
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                Flow {
+                    id: styleChipsFlow
+                    width: parent.width
+                    spacing: 6
+                    Repeater {
+                        model: styleDialog.displayedStyles
+                        delegate: PillButton {
+                            required property string modelData
+                            implicitHeight: 30
+                            text: modelData
+                            checked: styleDialog.isSelected(modelData)
+                            onClicked: styleDialog.toggleStyle(modelData)
+                        }
                     }
                 }
             }
@@ -289,6 +309,9 @@ ApplicationWindow {
                     }
                 }
                 PillButton { text: "Ajouter"; implicitHeight: 34; onClicked: styleDialog.addCustomStyle() }
+            }
+            RowLayout {
+                Layout.fillWidth: true
                 PillButton {
                     text: "Auto-détecter"
                     iconName: "sync"
