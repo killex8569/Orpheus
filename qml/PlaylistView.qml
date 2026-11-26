@@ -139,7 +139,7 @@ Item {
             visible: (root.p.trackCount || 0) > 0
             TextField {
                 id: filterField
-                width: OTheme.mobile ? searchSortBar.width : Math.min(360, searchSortBar.width)
+                width: Math.min(360, searchSortBar.width)
                 implicitHeight: 38
                 placeholderText: "Rechercher dans la playlist"
                 placeholderTextColor: OTheme.muted
@@ -177,7 +177,6 @@ Item {
                 onClicked: sortMenu.popup(sortBtn, 0, sortBtn.height + 4)
                 Menu {
                     id: sortMenu
-                    height: Math.min(implicitHeight, ApplicationWindow.window ? ApplicationWindow.window.height * 0.6 : 420)
                     Repeater {
                         model: root.sortOptions
                         delegate: MenuItem {
@@ -200,7 +199,7 @@ Item {
             }
         }
 
-        // Filtrage par style / genre (une ligne horizontale sur téléphone, multi-lignes bornée sur ordinateur).
+        // Filtrage par style / genre (une ligne horizontale sur téléphone, multi-lignes sur ordinateur).
         Flickable {
             visible: OTheme.mobile && (root.p.trackCount || 0) > 0
             Layout.fillWidth: true
@@ -237,42 +236,31 @@ Item {
                 }
             }
         }
-        Flickable {
+        Flow {
             visible: !OTheme.mobile && (root.p.trackCount || 0) > 0
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(desktopStyleFlow.implicitHeight, 108)
-            contentWidth: width
-            contentHeight: desktopStyleFlow.implicitHeight
-            flickableDirection: Flickable.VerticalFlick
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-            Flow {
-                id: desktopStyleFlow
-                width: parent.width
-                spacing: 6
-                PillButton {
-                    text: "Tous"
+            spacing: 6
+            PillButton {
+                text: "Tous"
+                implicitHeight: 28
+                checked: backend.playlistStyleFilter === ""
+                onClicked: backend.setPlaylistStyleFilter("")
+            }
+            Repeater {
+                model: backend.playlistStyles
+                delegate: PillButton {
+                    required property var modelData
                     implicitHeight: 28
-                    checked: backend.playlistStyleFilter === ""
-                    onClicked: backend.setPlaylistStyleFilter("")
+                    text: modelData.name + " (" + modelData.count + ")"
+                    checked: backend.playlistStyleFilter.toLowerCase() === modelData.name.toLowerCase()
+                    onClicked: backend.setPlaylistStyleFilter(modelData.name)
                 }
-                Repeater {
-                    model: backend.playlistStyles
-                    delegate: PillButton {
-                        required property var modelData
-                        implicitHeight: 28
-                        text: modelData.name + " (" + modelData.count + ")"
-                        checked: backend.playlistStyleFilter.toLowerCase() === modelData.name.toLowerCase()
-                        onClicked: backend.setPlaylistStyleFilter(modelData.name)
-                    }
-                }
-                PillButton {
-                    implicitHeight: 28
-                    iconName: "sync"
-                    text: backend.analyzingStyles ? "Analyse des styles… (" + backend.analyzingStylesRemaining + ")" : "Détecter les styles"
-                    onClicked: backend.analyzePlaylistStyles(root.p.id)
-                }
+            }
+            PillButton {
+                implicitHeight: 28
+                iconName: "sync"
+                text: backend.analyzingStyles ? "Analyse des styles… (" + backend.analyzingStylesRemaining + ")" : "Détecter les styles"
+                onClicked: backend.analyzePlaylistStyles(root.p.id)
             }
         }
 

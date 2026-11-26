@@ -267,8 +267,9 @@ ApplicationWindow {
             width: parent.width
             spacing: 12
             Flickable {
+                id: styleChipsFlick
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(styleChipsFlow.implicitHeight, Math.max(120, win.height * 0.38))
+                Layout.preferredHeight: Math.min(240, Math.max(120, win.height * 0.35))
                 contentWidth: width
                 contentHeight: styleChipsFlow.implicitHeight
                 flickableDirection: Flickable.VerticalFlick
@@ -277,7 +278,7 @@ ApplicationWindow {
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                 Flow {
                     id: styleChipsFlow
-                    width: parent.width
+                    width: styleChipsFlick.width
                     spacing: 6
                     Repeater {
                         model: styleDialog.displayedStyles
