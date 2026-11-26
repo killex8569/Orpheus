@@ -137,6 +137,14 @@ ApplicationWindow {
         deleteDialog.name = name
         deleteDialog.open()
     }
+    function askEditStyles(trackId, title, artist, currentStyles) {
+        styleDialog.trackId = trackId
+        styleDialog.trackTitle = title || ""
+        styleDialog.trackArtist = artist || ""
+        styleDialog.selectedStyles = currentStyles ? currentStyles.slice() : []
+        customStyleField.text = ""
+        styleDialog.open()
+    }
 
     Dialog {
         id: nameDialog
@@ -185,6 +193,111 @@ ApplicationWindow {
             wrapMode: Text.WordWrap
         }
         onAccepted: { backend.deletePlaylist(playlistId); win.navigate("search", 0) }
+    }
+
+    Dialog {
+        id: styleDialog
+        property var trackId: 0
+        property string trackTitle: ""
+        property string trackArtist: ""
+        property var selectedStyles: []
+        readonly property var displayedStyles: {
+            const list = backend.allStyles.slice()
+            for (let i = 0; i < selectedStyles.length; ++i) {
+                const s = selectedStyles[i]
+                if (!list.some(x => x.toLowerCase() === s.toLowerCase()))
+                    list.push(s)
+            }
+            return list
+        }
+        function isSelected(style) {
+            return selectedStyles.some(s => s.toLowerCase() === style.toLowerCase())
+        }
+        function toggleStyle(style) {
+            const next = selectedStyles.slice()
+            const idx = next.findIndex(s => s.toLowerCase() === style.toLowerCase())
+            if (idx >= 0)
+                next.splice(idx, 1)
+            else
+                next.push(style)
+            selectedStyles = next
+        }
+        function addCustomStyle() {
+            const clean = customStyleField.text.trim()
+            if (clean === "") return
+            if (!isSelected(clean)) {
+                const next = selectedStyles.slice()
+                next.push(clean)
+                selectedStyles = next
+            }
+            customStyleField.text = ""
+        }
+        function syncFromBackend() {
+            if (trackId > 0)
+                selectedStyles = backend.trackStyles(trackId)
+        }
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(540, win.width - 32)
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        background: Rectangle { radius: 12; color: OTheme.panel2; border.color: OTheme.border }
+        header: ColumnLayout {
+            spacing: 2
+            Text {
+                text: "Styles / Tags"
+                color: OTheme.text; font.pixelSize: 17; font.weight: Font.DemiBold
+                Layout.leftMargin: 18; Layout.rightMargin: 18; Layout.topMargin: 18
+            }
+            Text {
+                text: styleDialog.trackTitle + (styleDialog.trackArtist ? " — " + styleDialog.trackArtist : "")
+                color: OTheme.muted; font.pixelSize: 12; elide: Text.ElideRight
+                Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+            }
+        }
+        ColumnLayout {
+            width: parent.width
+            spacing: 12
+            Flow {
+                Layout.fillWidth: true
+                spacing: 6
+                Repeater {
+                    model: styleDialog.displayedStyles
+                    delegate: PillButton {
+                        required property string modelData
+                        implicitHeight: 30
+                        text: modelData
+                        checked: styleDialog.isSelected(modelData)
+                        onClicked: styleDialog.toggleStyle(modelData)
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                TextField {
+                    id: customStyleField
+                    Layout.fillWidth: true
+                    implicitHeight: 34
+                    placeholderText: "Style personnalisé (ex. Super motivante)"
+                    placeholderTextColor: OTheme.muted
+                    color: OTheme.text
+                    selectByMouse: true
+                    onAccepted: styleDialog.addCustomStyle()
+                    background: Rectangle {
+                        radius: 8; color: OTheme.panel
+                        border.color: customStyleField.activeFocus ? OTheme.accent : OTheme.border
+                    }
+                }
+                PillButton { text: "Ajouter"; implicitHeight: 34; onClicked: styleDialog.addCustomStyle() }
+                PillButton {
+                    text: "Auto-détecter"
+                    iconName: "sync"
+                    implicitHeight: 34
+                    onClicked: backend.detectTrackStyles(styleDialog.trackId)
+                }
+            }
+        }
+        onAccepted: backend.setTrackStyles(styleDialog.trackId, styleDialog.selectedStyles)
     }
 
     // ---------- Raccourcis ----------
@@ -268,5 +381,9 @@ ApplicationWindow {
     Connections {
         target: backend
         function onToast(message, error) { toasts.show(message, error) }
+        function onStylesCatalogChanged() {
+            if (styleDialog.opened && styleDialog.trackId > 0)
+                styleDialog.syncFromBackend()
+        }
     }
 }

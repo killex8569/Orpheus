@@ -47,6 +47,7 @@ add_library(orpheus_core STATIC
     src/SpotifyWeb.cpp
     src/Lyrics.cpp
     src/LyricsService.cpp
+    src/GenreService.cpp
     src/Resolver.cpp
     src/Importer.cpp
     src/Jam.cpp

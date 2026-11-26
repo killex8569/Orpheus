@@ -123,6 +123,17 @@ const char *kSchema[] = {
     " id INTEGER PRIMARY KEY, track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,"
     " played_at INTEGER NOT NULL, listened REAL NOT NULL)",
     "CREATE INDEX IF NOT EXISTS plays_time ON plays(played_at)",
+    "CREATE TABLE IF NOT EXISTS track_styles ("
+    " track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,"
+    " style TEXT NOT NULL,"
+    " source TEXT NOT NULL DEFAULT 'auto',"
+    " PRIMARY KEY (track_id, style))",
+    "CREATE INDEX IF NOT EXISTS track_styles_style ON track_styles(style)",
+    "CREATE TABLE IF NOT EXISTS style_fetches ("
+    " track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,"
+    " status TEXT NOT NULL,"
+    " raw_genres TEXT,"
+    " fetched_at INTEGER NOT NULL)",
 };
 
 }  // namespace
@@ -248,8 +259,11 @@ Track Database::upsertTrack(const Track &t)
 
 std::optional<Track> Database::track(qint64 id) const
 {
-    const auto v = queryTracks(QStringLiteral("SELECT %1 FROM tracks WHERE id = ?").arg(kTrackCols), {id});
-    return v.isEmpty() ? std::nullopt : std::optional(v.first());
+    auto v = queryTracks(QStringLiteral("SELECT %1 FROM tracks WHERE id = ?").arg(kTrackCols), {id});
+    if (v.isEmpty())
+        return std::nullopt;
+    v.first().styles = trackStyles(id);
+    return v.first();
 }
 
 std::optional<Track> Database::trackByYt(const QString &ytId) const
@@ -627,11 +641,26 @@ QList<Track> Database::playlistTracks(qint64 id) const
                            .arg(cols.join(", ")),
                        {id});
     QList<Track> out;
+    QHash<qint64, QList<int>> byId;
     while (q.next()) {
         Track t = trackFromQuery(q);
         t.playlistAddedAt = q.value(extraColStart).toLongLong();
         t.playlistPosition = q.value(extraColStart + 1).toInt();
+        byId[t.id].append(int(out.size()));
         out.append(t);
+    }
+    if (!out.isEmpty()) {
+        QSqlQuery sq = exec(db(),
+                            "SELECT pt.track_id, ts.style FROM playlist_tracks pt "
+                            "JOIN track_styles ts ON ts.track_id = pt.track_id "
+                            "WHERE pt.playlist_id = ? ORDER BY ts.source DESC, ts.style COLLATE NOCASE",
+                            {id});
+        while (sq.next()) {
+            const qint64 tid = sq.value(0).toLongLong();
+            const QString style = sq.value(1).toString();
+            for (int idx : byId.value(tid))
+                out[idx].styles.append(style);
+        }
     }
     return out;
 }
@@ -714,6 +743,124 @@ void Database::reorderPlaylistTracks(qint64 playlistId, const QList<qint64> &ord
         exec(d, "UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND track_id = ?",
              {i + 1, playlistId, finalOrder[i]});
     d.commit();
+}
+
+// ---------- Styles / Genres ----------
+
+QStringList Database::trackStyles(qint64 trackId) const
+{
+    QStringList out;
+    QSqlQuery q = exec(db(),
+                       "SELECT style FROM track_styles WHERE track_id = ? ORDER BY source DESC, style COLLATE NOCASE",
+                       {trackId});
+    while (q.next())
+        out << q.value(0).toString();
+    return out;
+}
+
+bool Database::hasUserStyles(qint64 trackId) const
+{
+    QSqlQuery q = exec(db(),
+                       "SELECT EXISTS(SELECT 1 FROM track_styles WHERE track_id = ? AND source = 'user') "
+                       "OR EXISTS(SELECT 1 FROM style_fetches WHERE track_id = ? AND status = 'user')",
+                       {trackId, trackId});
+    return q.next() && q.value(0).toBool();
+}
+
+void Database::setTrackStyles(qint64 trackId, const QStringList &styles, bool userEdited)
+{
+    if (trackId <= 0)
+        return;
+    if (!userEdited && hasUserStyles(trackId))
+        return;
+
+    QStringList clean;
+    QSet<QString> seen;
+    for (const QString &raw : styles) {
+        const QString s = raw.trimmed();
+        const QString key = s.toLower();
+        if (!s.isEmpty() && !seen.contains(key)) {
+            seen.insert(key);
+            clean << s;
+        }
+    }
+
+    QSqlDatabase d = db();
+    d.transaction();
+    exec(d, "DELETE FROM track_styles WHERE track_id = ?", {trackId});
+    const QString src = userEdited ? QStringLiteral("user") : QStringLiteral("auto");
+    for (const QString &s : std::as_const(clean))
+        exec(d, "INSERT OR IGNORE INTO track_styles(track_id, style, source) VALUES (?, ?, ?)", {trackId, s, src});
+    if (userEdited) {
+        exec(d,
+             "INSERT INTO style_fetches(track_id, status, raw_genres, fetched_at) VALUES (?, 'user', NULL, ?) "
+             "ON CONFLICT(track_id) DO UPDATE SET status = 'user', fetched_at = excluded.fetched_at",
+             {trackId, nowSecs()});
+    }
+    d.commit();
+}
+
+void Database::saveStyleFetch(qint64 trackId, const QString &status, const QString &rawGenres)
+{
+    if (trackId <= 0)
+        return;
+    if (hasUserStyles(trackId) && status != QLatin1String("user"))
+        return;
+    exec(db(),
+         "INSERT OR REPLACE INTO style_fetches(track_id, status, raw_genres, fetched_at) VALUES (?, ?, ?, ?)",
+         {trackId, status, nullable(rawGenres), nowSecs()});
+}
+
+std::optional<QPair<QString, qint64>> Database::styleFetchStatus(qint64 trackId) const
+{
+    QSqlQuery q = exec(db(), "SELECT status, fetched_at FROM style_fetches WHERE track_id = ?", {trackId});
+    if (!q.next())
+        return std::nullopt;
+    return qMakePair(q.value(0).toString(), q.value(1).toLongLong());
+}
+
+QList<Track> Database::tracksNeedingStyles(qint64 priorityPlaylistId, int limit) const
+{
+    QStringList cols;
+    for (const QString &c : QString(kTrackCols).split(", "))
+        cols << "t." + c;
+    const qint64 retryBefore = nowSecs() - 7 * 86400;
+    if (priorityPlaylistId > 0) {
+        return queryTracks(
+            QStringLiteral("SELECT %1 FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id "
+                           "LEFT JOIN style_fetches sf ON sf.track_id = t.id "
+                           "WHERE pt.playlist_id = ? AND (sf.track_id IS NULL OR (sf.status = 'missing' AND sf.fetched_at < ?)) "
+                           "ORDER BY pt.position LIMIT ?")
+                .arg(cols.join(", ")),
+            {priorityPlaylistId, retryBefore, limit});
+    }
+    return queryTracks(
+        QStringLiteral("SELECT %1 FROM tracks t LEFT JOIN style_fetches sf ON sf.track_id = t.id "
+                       "WHERE sf.track_id IS NULL OR (sf.status = 'missing' AND sf.fetched_at < ?) "
+                       "ORDER BY t.added_at DESC LIMIT ?")
+            .arg(cols.join(", ")),
+        {retryBefore, limit});
+}
+
+QStringList Database::playlistNamesForTrack(qint64 trackId) const
+{
+    QStringList out;
+    QSqlQuery q = exec(db(),
+                       "SELECT p.name FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id "
+                       "WHERE pt.track_id = ? AND p.kind != 'cache'",
+                       {trackId});
+    while (q.next())
+        out << q.value(0).toString();
+    return out;
+}
+
+QStringList Database::allKnownStyles() const
+{
+    QStringList out;
+    QSqlQuery q = exec(db(), "SELECT DISTINCT style FROM track_styles ORDER BY style COLLATE NOCASE");
+    while (q.next())
+        out << q.value(0).toString();
+    return out;
 }
 
 // ---------- Imports ----------

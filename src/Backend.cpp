@@ -63,6 +63,7 @@ bool Backend::init(QString *error)
     m_resolver = std::make_unique<TrackResolver>(&m_db, m_yt);
     m_importer = new Importer(&m_db, m_yt, m_spotify, m_spotifyWeb, m_dl, m_resolver.get(), this);
     m_lyrics = new LyricsService(&m_db, this);
+    m_genres = new GenreService(&m_db, this);
     m_jam = new JamController(&m_db, m_player, &m_paths, this);
     connect(m_jam, &JamController::toast, this, &Backend::toast);
     connect(m_jam, &JamController::queueChanged, this, &Backend::updateMarks);
@@ -88,6 +89,7 @@ bool Backend::init(QString *error)
     connect(m_importer, &Importer::finished, this, [this](qint64 playlistId) {
         refreshPlaylists();
         markImported();
+        m_genres->enqueuePlaylist(playlistId, true);
         if (m_currentPlaylistId == playlistId)
             openPlaylist(playlistId);
     });
@@ -98,13 +100,25 @@ bool Backend::init(QString *error)
     connect(m_dl, &Downloader::progress, this, &Backend::downloadsChanged);
     connect(m_dl, &Downloader::finished, this, [this](qint64 id, bool ok, const QString &) {
         // Morceau gardé en local : ses paroles aussi, pour l'écoute hors ligne.
-        if (ok)
+        if (ok) {
             m_lyrics->enqueue(id);
+            m_genres->enqueueTrack(id, false);
+        }
         if (const auto t = m_db.track(id)) {
             for (TrackModel *m : {&m_search, &m_local, &m_playlistTracks, m_jam->queue()})
                 m->updateTrack(*t);
         }
         scheduleRefresh();
+    });
+    connect(m_genres, &GenreService::statusChanged, this, &Backend::stylesStatusChanged);
+    connect(m_genres, &GenreService::trackStylesChanged, this, [this](qint64 id) {
+        if (const auto t = m_db.track(id)) {
+            for (TrackModel *m : {&m_search, &m_local, &m_playlistTracks, &m_queue, &m_statsTracks, m_jam->queue()})
+                m->updateTrack(*t);
+        }
+        emit stylesCatalogChanged();
+        if (m_currentPlaylistId > 0 && !m_styleRefreshTimer.isActive())
+            m_styleRefreshTimer.start();
     });
 
     // Position du lecteur rafraîchie 4 fois par seconde pendant la lecture.
@@ -116,6 +130,16 @@ bool Backend::init(QString *error)
     connect(&m_refreshTimer, &QTimer::timeout, this, [this] {
         refreshPlaylists();
         refreshJobs();
+    });
+    m_styleRefreshTimer.setSingleShot(true);
+    m_styleRefreshTimer.setInterval(800);
+    connect(&m_styleRefreshTimer, &QTimer::timeout, this, [this] {
+        if (m_currentPlaylistId <= 0)
+            return;
+        if (m_playlistSort == QLatin1String("style_asc") || !m_playlistStyleFilter.isEmpty())
+            openPlaylist(m_currentPlaylistId);
+        else
+            updateCurrentPlaylistStyles();
     });
 
     m_targetPlaylistId = m_db.setting("target_playlist").toLongLong();
@@ -140,6 +164,8 @@ bool Backend::init(QString *error)
     QTimer::singleShot(3000, m_dl, &Downloader::resumePending);
     // Paroles des morceaux déjà en local, récupérées tranquillement en arrière-plan.
     QTimer::singleShot(15000, m_lyrics, &LyricsService::enqueueMissing);
+    // Genres/styles musicaux récupérés doucement en arrière-plan (iTunes / Deezer).
+    QTimer::singleShot(20000, m_genres, &GenreService::enqueueMissing);
     // Une seule vérification des mises à jour au lancement (désactivable).
     if (m_db.settingBool("update_check", true))
         QTimer::singleShot(4000, m_updates, &UpdateChecker::check);
@@ -373,7 +399,7 @@ void Backend::play(const QString &list, int row)
         return;
     }
     if (list == "playlist") {
-        // Toute la playlist est lue (tri respecté) : on part du morceau choisi.
+        // Toute la playlist est lue (tri et filtre de style respectés) : on part du morceau choisi.
         const QList<Track> all = orderedPlaylistTracks(m_currentPlaylistId);
         int start = row;
         for (int i = 0; i < all.size(); ++i)
@@ -491,7 +517,8 @@ void Backend::trackAction(const QString &list, int row, const QString &action, c
             return;
         if (list == "queue") {
             m_player->moveItem(row, to);
-        } else if (list == "playlist" && m_playlistFilter.isEmpty() && m_playlistSort == QLatin1String("order")) {
+        } else if (list == "playlist" && m_playlistFilter.isEmpty() && m_playlistStyleFilter.isEmpty()
+                   && m_playlistSort == QLatin1String("order")) {
             m_db.moveInPlaylist(m_currentPlaylistId, t.id, to);
             openPlaylist(m_currentPlaylistId);
         }
@@ -631,6 +658,13 @@ void Backend::sortPlaylistTracks(QList<Track> &tracks, const QString &sort) cons
             return a.duration > b.duration;
         if (sort == QLatin1String("plays_desc"))
             return a.playCount != b.playCount ? a.playCount > b.playCount : norm(a.title) < norm(b.title);
+        if (sort == QLatin1String("style_asc")) {
+            const QString sa = a.styles.isEmpty() ? QString() : norm(a.styles.first());
+            const QString sb = b.styles.isEmpty() ? QString() : norm(b.styles.first());
+            if (sa.isEmpty() != sb.isEmpty())
+                return sb.isEmpty();
+            return sa != sb ? sa < sb : norm(a.title) < norm(b.title);
+        }
         return false;
     });
 }
@@ -638,9 +672,51 @@ void Backend::sortPlaylistTracks(QList<Track> &tracks, const QString &sort) cons
 QList<Track> Backend::orderedPlaylistTracks(qint64 id) const
 {
     QList<Track> tracks = m_db.playlistTracks(id);
+    if (id == m_currentPlaylistId && !m_playlistStyleFilter.isEmpty()) {
+        tracks.removeIf([this](const Track &t) {
+            return !std::any_of(t.styles.cbegin(), t.styles.cend(), [this](const QString &s) {
+                return s.compare(m_playlistStyleFilter, Qt::CaseInsensitive) == 0;
+            });
+        });
+    }
     const QString sort = m_db.setting(QStringLiteral("playlist_sort_%1").arg(id), QStringLiteral("order"));
     sortPlaylistTracks(tracks, sort);
     return tracks;
+}
+
+void Backend::updateCurrentPlaylistStyles()
+{
+    if (m_currentPlaylistId <= 0)
+        return;
+    const QList<Track> all = m_db.playlistTracks(m_currentPlaylistId);
+    QHash<QString, int> counts;
+    QHash<QString, QString> display;
+    for (const Track &t : all) {
+        QSet<QString> seenInTrack;
+        for (const QString &s : t.styles) {
+            const QString k = s.toLower();
+            if (seenInTrack.contains(k))
+                continue;
+            seenInTrack.insert(k);
+            counts[k] += 1;
+            if (!display.contains(k))
+                display.insert(k, s);
+        }
+    }
+    struct Entry {
+        QString name;
+        int count;
+    };
+    QList<Entry> list;
+    for (auto it = counts.cbegin(); it != counts.cend(); ++it)
+        list.append({display.value(it.key()), it.value()});
+    std::sort(list.begin(), list.end(), [](const Entry &a, const Entry &b) {
+        return a.count != b.count ? a.count > b.count : a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+    });
+    m_playlistStyles.clear();
+    for (const Entry &e : list)
+        m_playlistStyles.append(QVariantMap{{"name", e.name}, {"count", e.count}});
+    emit currentPlaylistChanged();
 }
 
 void Backend::openPlaylist(qint64 id)
@@ -650,6 +726,7 @@ void Backend::openPlaylist(qint64 id)
         return;
     if (id != m_currentPlaylistId) {
         m_playlistFilter.clear();
+        m_playlistStyleFilter.clear();
         m_playlistSort = m_db.setting(QStringLiteral("playlist_sort_%1").arg(id), QStringLiteral("order"));
     }
     m_currentPlaylistId = id;
@@ -660,12 +737,59 @@ void Backend::openPlaylist(qint64 id)
         updateMarks();
         emit playlistsChanged();
     }
-    QList<Track> tracks = m_db.playlistTracks(id);
+    QList<Track> allTracks = m_db.playlistTracks(id);
+    // Détection locale instantanée pour les morceaux encore sans style.
+    for (Track &t : allTracks) {
+        if (t.styles.isEmpty() && !m_db.hasUserStyles(t.id)) {
+            const QStringList inferred = GenreService::inferFromMetadata(t.title, t.artist, t.album, {p->name});
+            if (!inferred.isEmpty()) {
+                m_db.setTrackStyles(t.id, inferred, false);
+                t.styles = inferred;
+            }
+        }
+    }
+    // Comptage des styles sur toute la playlist (avant filtres).
+    QHash<QString, int> counts;
+    QHash<QString, QString> display;
+    for (const Track &t : std::as_const(allTracks)) {
+        QSet<QString> seenInTrack;
+        for (const QString &s : t.styles) {
+            const QString k = s.toLower();
+            if (seenInTrack.contains(k))
+                continue;
+            seenInTrack.insert(k);
+            counts[k] += 1;
+            if (!display.contains(k))
+                display.insert(k, s);
+        }
+    }
+    struct StyleEntry {
+        QString name;
+        int count;
+    };
+    QList<StyleEntry> styleList;
+    for (auto it = counts.cbegin(); it != counts.cend(); ++it)
+        styleList.append({display.value(it.key()), it.value()});
+    std::sort(styleList.begin(), styleList.end(), [](const StyleEntry &a, const StyleEntry &b) {
+        return a.count != b.count ? a.count > b.count : a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+    });
+    m_playlistStyles.clear();
+    for (const StyleEntry &e : styleList)
+        m_playlistStyles.append(QVariantMap{{"name", e.name}, {"count", e.count}});
+
+    QList<Track> tracks = std::move(allTracks);
+    if (!m_playlistStyleFilter.isEmpty()) {
+        tracks.removeIf([this](const Track &t) {
+            return !std::any_of(t.styles.cbegin(), t.styles.cend(), [this](const QString &s) {
+                return s.compare(m_playlistStyleFilter, Qt::CaseInsensitive) == 0;
+            });
+        });
+    }
     sortPlaylistTracks(tracks, m_playlistSort);
     if (!m_playlistFilter.isEmpty()) {
         const QStringList words = Matcher::normalize(m_playlistFilter).split(' ', Qt::SkipEmptyParts);
         tracks.removeIf([&words](const Track &t) {
-            const QString hay = Matcher::normalize(t.title + ' ' + t.artist + ' ' + t.album);
+            const QString hay = Matcher::normalize(t.title + ' ' + t.artist + ' ' + t.album + ' ' + t.styles.join(' '));
             return !std::all_of(words.cbegin(), words.cend(), [&hay](const QString &w) { return hay.contains(w); });
         });
     }
@@ -697,6 +821,80 @@ void Backend::setPlaylistSort(const QString &sort)
             m_db.setSetting(key, clean);
         openPlaylist(m_currentPlaylistId);
     }
+}
+
+void Backend::setPlaylistStyleFilter(const QString &style)
+{
+    const QString clean = style.trimmed();
+    const QString next = clean.compare(m_playlistStyleFilter, Qt::CaseInsensitive) == 0 ? QString() : clean;
+    if (next == m_playlistStyleFilter)
+        return;
+    m_playlistStyleFilter = next;
+    if (m_currentPlaylistId > 0)
+        openPlaylist(m_currentPlaylistId);
+}
+
+QStringList Backend::allStyles() const
+{
+    QStringList out = GenreService::predefinedStyles();
+    QSet<QString> seen;
+    for (const QString &s : std::as_const(out))
+        seen.insert(s.toLower());
+    for (const QString &s : m_db.allKnownStyles()) {
+        const QString k = s.toLower();
+        if (!seen.contains(k)) {
+            seen.insert(k);
+            out << s;
+        }
+    }
+    return out;
+}
+
+void Backend::setTrackStyles(qint64 trackId, const QStringList &styles)
+{
+    if (trackId <= 0)
+        return;
+    m_db.setTrackStyles(trackId, styles, true);
+    if (const auto t = m_db.track(trackId)) {
+        for (TrackModel *m : {&m_search, &m_local, &m_playlistTracks, &m_queue, &m_statsTracks, m_jam->queue()})
+            m->updateTrack(*t);
+    }
+    emit stylesCatalogChanged();
+    if (m_currentPlaylistId > 0) {
+        if (m_playlistSort == QLatin1String("style_asc") || !m_playlistStyleFilter.isEmpty())
+            openPlaylist(m_currentPlaylistId);
+        else
+            updateCurrentPlaylistStyles();
+    }
+}
+
+QStringList Backend::stylesForTrack(const QString &list, int row)
+{
+    TrackModel *m = model(list);
+    const Track *t = m ? m->at(row) : nullptr;
+    if (!t)
+        return {};
+    return t->id > 0 ? m_db.trackStyles(t->id) : t->styles;
+}
+
+void Backend::detectTrackStyles(qint64 trackId)
+{
+    if (trackId <= 0)
+        return;
+    m_genres->enqueueTrack(trackId, true);
+    emit toast(QStringLiteral("Détection du style en cours…"), false);
+}
+
+void Backend::analyzePlaylistStyles(qint64 playlistId)
+{
+    if (playlistId <= 0)
+        return;
+    m_genres->enqueuePlaylist(playlistId, true);
+    if (m_genres->running())
+        emit toast(QStringLiteral("Analyse des styles lancée (%1 morceau(x))").arg(m_genres->remaining()), false);
+    else
+        emit toast(QStringLiteral("Tous les styles de cette playlist sont déjà analysés"), false);
+    openPlaylist(playlistId);
 }
 
 void Backend::playPlaylist(qint64 id, bool shuffleOn)

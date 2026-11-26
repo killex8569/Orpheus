@@ -10,6 +10,7 @@
 
 #include "Database.h"
 #include "Downloader.h"
+#include "GenreService.h"
 #include "Importer.h"
 #include "Jam.h"
 #include "Lyrics.h"
@@ -757,6 +758,59 @@ private slots:
         QCOMPARE(got[3].id, tManual.id);
         QVERIFY(got[0].playlistAddedAt > 0);
         QCOMPARE(got[0].playlistPosition, 1);
+    }
+
+    void trackStylesAndGenres()
+    {
+        // Détection locale par métadonnées.
+        const QStringList hard = GenreService::inferFromMetadata("BAD PIGGIES (HARDTEKK)", "Kale Toeter", {});
+        QVERIFY(hard.contains("Hardcore"));
+        QVERIFY(hard.contains("Énergique"));
+        QVERIFY(hard.contains("Agressive"));
+        QVERIFY(hard.contains("Rapide"));
+
+        const QStringList phonk = GenreService::inferFromMetadata("Vazio Funk - Slowed", "-Prey, SXID", {});
+        QVERIFY(phonk.contains("Phonk"));
+        QVERIFY(phonk.contains("Obscur"));
+
+        const QStringList ost = GenreService::inferFromMetadata("Lumière", "Lorien Testard",
+                                                                 "Clair Obscur: Expedition 33 (Original Soundtrack)");
+        QVERIFY(ost.contains("Gaming / OST"));
+
+        const QStringList lofi = GenreService::inferFromMetadata("Rainy Night", "Chill Artist", "Sleep Beats", {"Lofi chill"});
+        QVERIFY(lofi.contains("Chill / Lo-Fi"));
+        QVERIFY(lofi.contains("Beat"));
+
+        const QStringList jpop = GenreService::inferFromMetadata("夜に駆ける", "YOASOBI", {});
+        QVERIFY(jpop.contains("J-Pop / Anime"));
+
+        // Correspondance des genres iTunes / Deezer.
+        const QStringList mapped = GenreService::mapRawGenres({"Electronic", "Techno/House", "Soundtrack"});
+        QVERIFY(mapped.contains("Électro"));
+        QVERIFY(mapped.contains("Énergique"));
+        QVERIFY(mapped.contains("Gaming / OST"));
+
+        // Persistance et protection des choix manuels.
+        QTemporaryDir dir;
+        Database db;
+        QVERIFY(db.open(dir.filePath("g.db"), nullptr));
+        const qint64 pl = db.createPlaylist("Mix", "user");
+        const Track t1 = db.upsertTrack(input("aaaaaaaaaaa", "Artist", "Track 1"));
+        db.addToPlaylist(pl, t1.id);
+
+        db.setTrackStyles(t1.id, {"Électro", "Énergique"}, false);
+        QCOMPARE(db.track(t1.id)->styles, QStringList({"Électro", "Énergique"}));
+
+        db.setTrackStyles(t1.id, {"Super motivante", "Hardcore"}, true);
+        QVERIFY(db.hasUserStyles(t1.id));
+        // L'auto-détection ne doit pas écraser les tags modifiés par l'utilisateur.
+        db.setTrackStyles(t1.id, {"Pop"}, false);
+        QCOMPARE(db.trackStyles(t1.id), QStringList({"Hardcore", "Super motivante"}));
+
+        const QList<Track> plTracks = db.playlistTracks(pl);
+        QCOMPARE(plTracks.size(), 1);
+        QCOMPARE(plTracks[0].styles, QStringList({"Hardcore", "Super motivante"}));
+        QVERIFY(db.allKnownStyles().contains("Super motivante"));
     }
 };
 

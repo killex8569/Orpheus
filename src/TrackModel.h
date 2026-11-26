@@ -24,6 +24,7 @@ public:
         ErrorRole,
         InPlaylistRole,  // "same" | "similar" | "" : déjà dans la playlist cible ?
         ExtraRole,       // texte complémentaire par ligne (ex. « 12 écoutes »)
+        StylesRole,      // styles / genres du morceau
     };
 
     TrackModel(const Paths *paths, QObject *parent = nullptr) : QAbstractListModel(parent), m_paths(paths) {}

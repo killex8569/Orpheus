@@ -58,6 +58,7 @@ ListView {
         required property string quality
         required property string inPlaylist
         required property string extra
+        required property var styles
         readonly property bool current: list.isCurrent(index, trackId)
         readonly property bool marked: list.showMarks && inPlaylist !== "" && !current
 
@@ -171,6 +172,7 @@ ListView {
                 }
                 Text {
                     text: row.artist + (list.narrow && row.extra !== "" ? "  ·  " + row.extra : "")
+                          + (list.narrow && row.styles && row.styles.length > 0 ? "  ·  " + row.styles.slice(0, 2).join(", ") : "")
                           + (!row.marked ? ""
                           : row.inPlaylist === "same" ? "  ·  ✓ déjà dans " + list.marksTarget
                           : "  ·  ✓ une version est déjà dans " + list.marksTarget)
@@ -197,6 +199,32 @@ ListView {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 2
             }
+            Row {
+                visible: row.styles && row.styles.length > 0 && !list.narrow && list.width > 680
+                spacing: 4
+                Layout.alignment: Qt.AlignVCenter
+                Repeater {
+                    model: row.styles ? row.styles.slice(0, 2) : []
+                    delegate: Rectangle {
+                        required property string modelData
+                        width: tagLabel.implicitWidth + 12
+                        height: 18
+                        radius: 9
+                        color: Qt.rgba(OTheme.accent.r, OTheme.accent.g, OTheme.accent.b, 0.14)
+                        Text {
+                            id: tagLabel
+                            anchors.centerIn: parent
+                            text: parent.modelData
+                            color: OTheme.accent
+                            font.pixelSize: 10
+                        }
+                    }
+                }
+                HoverHandler { id: stylesHover }
+                ToolTip.visible: stylesHover.hovered && row.styles && row.styles.length > 0
+                ToolTip.text: row.styles ? row.styles.join(" · ") : ""
+                ToolTip.delay: 400
+            }
             Text {
                 text: row.durationText
                 color: OTheme.muted
@@ -218,11 +246,19 @@ ListView {
     property int menuRow: -1
     property var menuState: ""
     property var menuMarks: ({})    // {id de playlist: "same" | "similar"}
+    property var menuTrackId: 0
+    property string menuTitle: ""
+    property string menuArtist: ""
+    property var menuStyles: []
 
     function openMenu(row) {
         menuRow = row
         const item = itemAtIndex(row)
         menuState = item ? item.trackState : ""
+        menuTrackId = item ? Number(item.trackId) : 0
+        menuTitle = item ? item.title : ""
+        menuArtist = item ? item.artist : ""
+        menuStyles = item && item.styles ? item.styles : []
         menuMarks = backend.playlistMarks(listName, row)
         menu.popup()
     }
@@ -267,6 +303,12 @@ ListView {
             onTriggered: backend.trackAction(list.listName, list.menuRow, list.menuState === "ready" ? "deleteFile" : "download")
         }
         MenuItem { text: "Copier le lien YouTube"; onTriggered: backend.trackAction(list.listName, list.menuRow, "copyLink") }
+        MenuItem {
+            text: "Styles / Tags…"
+            visible: list.menuTrackId > 0
+            height: visible ? implicitHeight : 0
+            onTriggered: ApplicationWindow.window.askEditStyles(list.menuTrackId, list.menuTitle, list.menuArtist, list.menuStyles)
+        }
         MenuSeparator { visible: list.editable }
         MenuItem { text: "Monter"; visible: list.editable; height: visible ? implicitHeight : 0
             onTriggered: backend.trackAction(list.listName, list.menuRow, "moveUp") }

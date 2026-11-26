@@ -18,7 +18,8 @@ Item {
         { key: "album_asc", label: "Album (A → Z)" },
         { key: "duration_asc", label: "Durée (courte → longue)" },
         { key: "duration_desc", label: "Durée (longue → courte)" },
-        { key: "plays_desc", label: "Plus écoutés" }
+        { key: "plays_desc", label: "Plus écoutés" },
+        { key: "style_asc", label: "Style" }
     ]
     readonly property string currentSortLabel: {
         const hit = sortOptions.find(o => o.key === backend.playlistSort)
@@ -189,7 +190,7 @@ Item {
                 }
             }
             Text {
-                visible: root.filtering
+                visible: root.filtering || backend.playlistStyleFilter !== ""
                 height: 38
                 verticalAlignment: Text.AlignVCenter
                 text: backend.playlistTracks.count + " résultat" + (backend.playlistTracks.count > 1 ? "s" : "")
@@ -198,14 +199,44 @@ Item {
             }
         }
 
+        // Filtrage par style / genre.
+        Flow {
+            Layout.fillWidth: true
+            spacing: 6
+            visible: (root.p.trackCount || 0) > 0
+            PillButton {
+                text: "Tous"
+                implicitHeight: 28
+                checked: backend.playlistStyleFilter === ""
+                onClicked: backend.setPlaylistStyleFilter("")
+            }
+            Repeater {
+                model: backend.playlistStyles
+                delegate: PillButton {
+                    required property var modelData
+                    implicitHeight: 28
+                    text: modelData.name + " (" + modelData.count + ")"
+                    checked: backend.playlistStyleFilter.toLowerCase() === modelData.name.toLowerCase()
+                    onClicked: backend.setPlaylistStyleFilter(modelData.name)
+                }
+            }
+            PillButton {
+                implicitHeight: 28
+                iconName: "sync"
+                text: backend.analyzingStyles ? "Analyse des styles… (" + backend.analyzingStylesRemaining + ")" : "Détecter les styles"
+                onClicked: backend.analyzePlaylistStyles(root.p.id)
+            }
+        }
+
         TrackList {
             Layout.fillWidth: true
             Layout.fillHeight: true
             listName: "playlist"
             // Pas de réordonnancement sur une liste filtrée ou triée (positions ambiguës).
-            editable: !root.isCache && !root.filtering && backend.playlistSort === "order"
+            editable: !root.isCache && !root.filtering && backend.playlistSort === "order" && backend.playlistStyleFilter === ""
             model: backend.playlistTracks
             emptyText: root.filtering ? "Aucun morceau ne correspond à « " + backend.playlistFilter + " »."
+                     : backend.playlistStyleFilter !== "" ? "Aucun morceau avec le style « " + backend.playlistStyleFilter + " »."
                      : root.isCache ? "Les morceaux que vous écoutez apparaîtront ici."
                                     : "Playlist vide — ajoutez des morceaux depuis la recherche (clic droit → Ajouter à une playlist)."
         }

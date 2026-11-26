@@ -35,6 +35,7 @@ QVariant TrackModel::data(const QModelIndex &index, int role) const
     case ErrorRole: return t.error;
     case InPlaylistRole: return mark(t);
     case ExtraRole: return m_extra.value(index.row());
+    case StylesRole: return t.styles;
     }
     return {};
 }
@@ -45,7 +46,7 @@ QHash<int, QByteArray> TrackModel::roleNames() const
             {ArtistRole, "artist"},   {AlbumRole, "album"},     {DurationTextRole, "durationText"},
             {CoverRole, "cover"},     {StateRole, "trackState"}, {QualityRole, "quality"},
             {ErrorRole, "error"},     {InPlaylistRole, "inPlaylist"},
-            {ExtraRole, "extra"}};
+            {ExtraRole, "extra"},     {StylesRole, "styles"}};
 }
 
 void TrackModel::setTracks(const QList<Track> &tracks, const QStringList &extra)

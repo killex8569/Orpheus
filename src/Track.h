@@ -3,6 +3,7 @@
 #include <QFileInfo>
 #include <QMetaType>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 
 // Morceau : connu en base (id > 0) ou simple résultat de recherche/import.
@@ -26,6 +27,7 @@ struct Track {
     qint64 addedAt = 0;
     qint64 playlistAddedAt = 0;
     int playlistPosition = 0;
+    QStringList styles;
 
     // Fichier local réellement présent sur le disque ?
     bool isLocal() const { return state == QLatin1String("ready") && !filePath.isEmpty() && QFileInfo::exists(filePath); }

@@ -7,6 +7,7 @@
 
 #include "Database.h"
 #include "Downloader.h"
+#include "GenreService.h"
 #include "Importer.h"
 #include "JamController.h"
 #include "LyricsService.h"
@@ -33,6 +34,11 @@ class Backend : public QObject {
     // Texte de la barre de recherche de la playlist ouverte ("" = tous les morceaux).
     Q_PROPERTY(QString playlistFilter READ playlistFilter NOTIFY currentPlaylistChanged)
     Q_PROPERTY(QString playlistSort READ playlistSort NOTIFY currentPlaylistChanged)
+    Q_PROPERTY(QString playlistStyleFilter READ playlistStyleFilter NOTIFY currentPlaylistChanged)
+    Q_PROPERTY(QVariantList playlistStyles READ playlistStyles NOTIFY currentPlaylistChanged)
+    Q_PROPERTY(QStringList allStyles READ allStyles NOTIFY stylesCatalogChanged)
+    Q_PROPERTY(bool analyzingStyles READ analyzingStyles NOTIFY stylesStatusChanged)
+    Q_PROPERTY(int analyzingStylesRemaining READ analyzingStylesRemaining NOTIFY stylesStatusChanged)
     Q_PROPERTY(QVariantList jobs READ jobs NOTIFY jobsChanged)
     Q_PROPERTY(bool searching READ searching NOTIFY searchChanged)
     Q_PROPERTY(QString searchError READ searchError NOTIFY searchChanged)
@@ -107,6 +113,11 @@ public:
     QVariantMap currentPlaylist() const { return m_currentPlaylist; }
     QString playlistFilter() const { return m_playlistFilter; }
     QString playlistSort() const { return m_playlistSort; }
+    QString playlistStyleFilter() const { return m_playlistStyleFilter; }
+    QVariantList playlistStyles() const { return m_playlistStyles; }
+    QStringList allStyles() const;
+    bool analyzingStyles() const { return m_genres && m_genres->running(); }
+    int analyzingStylesRemaining() const { return m_genres ? m_genres->remaining() : 0; }
     QVariantList jobs() const { return m_jobs; }
     bool searching() const { return m_searching; }
     QString searchError() const { return m_searchError; }
@@ -188,6 +199,12 @@ public:
     // ou l'album (sans tenir compte de la casse ni des accents).
     Q_INVOKABLE void filterPlaylist(const QString &text);
     Q_INVOKABLE void setPlaylistSort(const QString &sort);
+    Q_INVOKABLE void setPlaylistStyleFilter(const QString &style);
+    Q_INVOKABLE void setTrackStyles(qint64 trackId, const QStringList &styles);
+    Q_INVOKABLE QStringList trackStyles(qint64 trackId) const { return trackId > 0 ? m_db.trackStyles(trackId) : QStringList{}; }
+    Q_INVOKABLE QStringList stylesForTrack(const QString &list, int row);
+    Q_INVOKABLE void detectTrackStyles(qint64 trackId);
+    Q_INVOKABLE void analyzePlaylistStyles(qint64 playlistId);
     Q_INVOKABLE void playPlaylist(qint64 id, bool shuffle);
     // Bouton « Aléatoire » d'une playlist : active/désactive le mélange de toute la playlist.
     Q_INVOKABLE void shufflePlaylist(qint64 id);
@@ -251,6 +268,8 @@ signals:
     void remoteChanged();
     void lyricsChanged();
     void statsChanged();
+    void stylesCatalogChanged();
+    void stylesStatusChanged();
     void toast(const QString &message, bool error);
 
 private:
@@ -263,6 +282,7 @@ private:
     void updateMarks();
     QList<Track> orderedPlaylistTracks(qint64 id) const;
     void sortPlaylistTracks(QList<Track> &tracks, const QString &sort) const;
+    void updateCurrentPlaylistStyles();
     // Ajoute des morceaux à la file du Jam (après résolution si besoin).
     void addToJam(const QList<Track> &tracks);
     // Dossier choisi (chemin ou URL file://) vérifié : absolu, hors données d'Orpheus,
@@ -283,6 +303,7 @@ private:
     std::unique_ptr<TrackResolver> m_resolver;
     Importer *m_importer;
     LyricsService *m_lyrics;
+    GenreService *m_genres = nullptr;
     JamController *m_jam = nullptr;
     UpdateChecker *m_updates = nullptr;
     TrackModel m_search, m_local, m_playlistTracks, m_queue, m_statsTracks;
@@ -291,6 +312,8 @@ private:
     qint64 m_currentPlaylistId = 0;
     QString m_playlistFilter;
     QString m_playlistSort = QStringLiteral("order");
+    QString m_playlistStyleFilter;
+    QVariantList m_playlistStyles;
     qint64 m_playingPlaylistId = 0;
     qint64 m_targetPlaylistId = 0;
     bool m_searching = false;
@@ -306,5 +329,5 @@ private:
     int m_statsDays = 30;
     QVariantMap m_stats;
     QVariantList m_statsArtists;
-    QTimer m_positionTimer, m_refreshTimer;
+    QTimer m_positionTimer, m_refreshTimer, m_styleRefreshTimer;
 };

@@ -141,6 +141,16 @@ public:
     // Réordonne les morceaux d'une playlist selon orderedTrackIds (les éventuels autres suivent).
     void reorderPlaylistTracks(qint64 playlistId, const QList<qint64> &orderedTrackIds);
 
+    // Styles / genres des morceaux
+    QStringList trackStyles(qint64 trackId) const;
+    bool hasUserStyles(qint64 trackId) const;
+    void setTrackStyles(qint64 trackId, const QStringList &styles, bool userEdited);
+    void saveStyleFetch(qint64 trackId, const QString &status, const QString &rawGenres);
+    std::optional<QPair<QString, qint64>> styleFetchStatus(qint64 trackId) const;
+    QList<Track> tracksNeedingStyles(qint64 priorityPlaylistId, int limit) const;
+    QStringList playlistNamesForTrack(qint64 trackId) const;
+    QStringList allKnownStyles() const;
+
     // Imports
     qint64 createJob(const QString &source, const QString &name);
     void updateJob(const ImportJob &job);
