@@ -1,7 +1,7 @@
 # Paquet RPM d'Orpheus (Fedora). Construit par .github/workflows/installers.yml :
-#   rpmbuild -ba -D "orpheus_version 1.3.1" packaging/linux/orpheus.spec
+#   rpmbuild -ba -D "orpheus_version 1.3.2" packaging/linux/orpheus.spec
 # avec l'archive des sources orpheus-<version>.tar.gz dans le dossier SOURCES.
-%{!?orpheus_version: %global orpheus_version 1.3.1}
+%{!?orpheus_version: %global orpheus_version 1.3.2}
 %bcond_without tests
 
 Name:           orpheus
@@ -69,6 +69,10 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/orpheus.desktop
 %{_datadir}/icons/hicolor/scalable/apps/orpheus.svg
 
 %changelog
+* Thu Nov 26 2026 tristanroux - 1.3.2-1
+- Android : barre de filtres par style sur une ligne défilable et dialogue
+  d'édition des styles adapté aux écrans de téléphone
+
 * Thu Nov 26 2026 tristanroux - 1.3.1-1
 - macOS : correction de la détection de libmpv (libarchive keg-only dans
   Homebrew) pour la compilation CI et locale
