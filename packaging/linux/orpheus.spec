@@ -1,7 +1,7 @@
 # Paquet RPM d'Orpheus (Fedora). Construit par .github/workflows/installers.yml :
-#   rpmbuild -ba -D "orpheus_version 1.2.1" packaging/linux/orpheus.spec
+#   rpmbuild -ba -D "orpheus_version 1.3.0" packaging/linux/orpheus.spec
 # avec l'archive des sources orpheus-<version>.tar.gz dans le dossier SOURCES.
-%{!?orpheus_version: %global orpheus_version 1.2.1}
+%{!?orpheus_version: %global orpheus_version 1.3.0}
 %bcond_without tests
 
 Name:           orpheus
@@ -69,6 +69,12 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/orpheus.desktop
 %{_datadir}/icons/hicolor/scalable/apps/orpheus.svg
 
 %changelog
+* Thu Nov 26 2026 tristanroux - 1.3.0-1
+- Barre de volume corrigée en fenêtre étroite / ancrée à droite sous
+  Windows ; tri persistant des playlists et conservation de l'ordre
+  distant lors des synchronisations ; détection automatique, tags
+  manuels et filtrage par styles / genres musicaux
+
 * Sun Nov 15 2026 killex8569 - 1.2.1-1
 - Android : APK signé avec une clé permanente (les versions suivantes
   s'installent par-dessus) ; interface sous les barres système corrigée
