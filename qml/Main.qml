@@ -6,7 +6,7 @@ ApplicationWindow {
     id: win
     width: 1280
     height: 820
-    minimumWidth: OTheme.mobile ? 0 : 860
+    minimumWidth: OTheme.mobile ? 0 : 720
     minimumHeight: OTheme.mobile ? 0 : 540
     visible: true
     title: backend.hasTrack ? backend.title + " — Orpheus" : "Orpheus"
@@ -218,7 +218,7 @@ ApplicationWindow {
 
         Sidebar {
             visible: !OTheme.mobile
-            Layout.preferredWidth: 250
+            Layout.preferredWidth: win.width < 920 ? 210 : 250
             Layout.fillHeight: true
             view: win.view
             playlistId: win.playlistId
@@ -229,7 +229,7 @@ ApplicationWindow {
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: OTheme.mobile ? 12 : 28
+            Layout.margins: OTheme.mobile ? 12 : (win.width < 920 ? 18 : 28)
             Layout.bottomMargin: 8
             currentIndex: ["search", "playlist", "queue", "import", "settings", "lyrics", "stats", "jam", "updates"].indexOf(win.view)
 

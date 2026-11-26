@@ -163,21 +163,24 @@ Rectangle {
         visible: !OTheme.mobile
         anchors.fill: parent
         anchors.leftMargin: 16
-        anchors.rightMargin: 20
-        spacing: 16
+        anchors.rightMargin: 16
+        spacing: root.width < 920 ? 10 : 16
 
         // Morceau en cours
         RowLayout {
-            Layout.preferredWidth: root.width * 0.28
-            Layout.maximumWidth: root.width * 0.28
+            Layout.fillWidth: true
+            Layout.minimumWidth: 140
+            Layout.preferredWidth: root.width * 0.25
+            Layout.maximumWidth: Math.max(180, root.width * 0.28)
             spacing: 12
-            Cover {}
+            Cover { visible: backend.hasTrack && root.width >= 760 }
             TrackInfo {}
         }
 
         // Contrôles
         ColumnLayout {
             Layout.fillWidth: true
+            Layout.minimumWidth: 230
             spacing: 4
             RowLayout {
                 Layout.alignment: Qt.AlignHCenter
@@ -207,10 +210,10 @@ Rectangle {
 
         // Volume
         RowLayout {
-            Layout.preferredWidth: root.width * 0.24
-            Layout.maximumWidth: root.width * 0.24
-            spacing: 8
-            Item { Layout.fillWidth: true }
+            Layout.fillWidth: false
+            Layout.minimumWidth: implicitWidth
+            Layout.alignment: Qt.AlignVCenter
+            spacing: root.width < 920 ? 6 : 8
             IconButton {
                 iconName: "lyrics"
                 iconSize: 17
@@ -219,7 +222,7 @@ Rectangle {
                 onClicked: root.toggleLyrics()
             }
             Text {
-                visible: backend.quality !== ""
+                visible: backend.quality !== "" && root.width >= 1080
                 text: backend.quality
                 color: OTheme.muted
                 font.pixelSize: 11
@@ -236,7 +239,10 @@ Rectangle {
             }
             BarSlider {
                 id: vol
-                Layout.preferredWidth: 120
+                Layout.preferredWidth: root.width < 1000 ? 92 : 120
+                Layout.minimumWidth: 76
+                Layout.maximumWidth: 120
+                clip: false
                 from: 0; to: 130
                 Binding on value { value: backend.volume; when: !vol.pressed }
                 onMoved: backend.setVolume(value)
