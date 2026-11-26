@@ -39,13 +39,19 @@ public class OrpheusAndroid {
         }
     }
 
+    private static Context appContext(Context ctx) {
+        Context app = ctx.getApplicationContext();
+        return app != null ? app : ctx;
+    }
+
     // ---------- yt-dlp (youtubedl-android) : appels bloquants, hors du thread principal ----------
 
     // "" si tout est prêt, sinon le message d'erreur.
     public static String initYtDlp(Context ctx) {
         try {
-            YoutubeDL.getInstance().init(ctx);
-            FFmpeg.getInstance().init(ctx);
+            Context app = appContext(ctx);
+            YoutubeDL.getInstance().init(app);
+            FFmpeg.getInstance().init(app);
             return "";
         } catch (Throwable e) {
             return String.valueOf(e);
@@ -60,7 +66,7 @@ public class OrpheusAndroid {
     // téléchargé que s'il a changé. Le fichier remplacé est celui qu'utilise la bibliothèque.
     public static String updateYtDlp(Context ctx) {
         try {
-            File dir = new File(ctx.getNoBackupFilesDir(), "youtubedl-android/yt-dlp");
+            File dir = new File(appContext(ctx).getNoBackupFilesDir(), "youtubedl-android/yt-dlp");
             File target = new File(dir, "yt-dlp");
             File tagFile = new File(dir, "orpheus-version");
             HttpURLConnection c = (HttpURLConnection) new URL(RELEASES + "/latest").openConnection();
@@ -100,22 +106,22 @@ public class OrpheusAndroid {
     }
 
     public static String nativeLibDir(Context ctx) {
-        return ctx.getApplicationInfo().nativeLibraryDir;
+        return appContext(ctx).getApplicationInfo().nativeLibraryDir;
     }
 
     public static String noBackupDir(Context ctx) {
-        return ctx.getNoBackupFilesDir().getAbsolutePath();
+        return appContext(ctx).getNoBackupFilesDir().getAbsolutePath();
     }
 
     public static String cacheDir(Context ctx) {
-        return ctx.getCacheDir().getAbsolutePath();
+        return appContext(ctx).getCacheDir().getAbsolutePath();
     }
 
     // ---------- Jam ----------
 
     public static synchronized void setMulticastLock(Context ctx, boolean on) {
         if (multicastLock == null) {
-            WifiManager wifi = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            WifiManager wifi = (WifiManager) appContext(ctx).getSystemService(Context.WIFI_SERVICE);
             if (wifi == null)
                 return;
             multicastLock = wifi.createMulticastLock("orpheus-jam");
@@ -131,6 +137,7 @@ public class OrpheusAndroid {
 
     // Titre vide : plus rien à lire, le service et sa notification s'arrêtent.
     public static void updateMedia(final Context ctx, final String title, final String artist, final boolean playing) {
+        final Context app = appContext(ctx);
         main.post(() -> {
             OrpheusService.title = title;
             OrpheusService.artist = artist;
@@ -143,7 +150,7 @@ public class OrpheusAndroid {
                 service.refresh();
             } else if (playing) {
                 try {
-                    ctx.startForegroundService(new Intent(ctx, OrpheusService.class));
+                    app.startForegroundService(new Intent(app, OrpheusService.class));
                 } catch (Exception e) {
                     // Démarrage refusé en arrière-plan (Android 12+) : réessayé au prochain changement.
                 }

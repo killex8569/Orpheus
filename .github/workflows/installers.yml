@@ -379,6 +379,8 @@ jobs:
           set -u
           pkg=io.github.killex8569.orpheus
           adb install -r dist/*.apk || exit 1
+          # Laisse PackageManager terminer les diffusions post-installation pour éviter qu'Android 15 ne relance QtActivity au démarrage.
+          sleep 3
           adb logcat -c
           adb shell am start -W -n $pkg/org.qtproject.qt.android.bindings.QtActivity
           # yt-dlp détecté au démarrage, puis de nouveau après sa mise à jour (ou un échec).
@@ -386,16 +388,22 @@ jobs:
             sleep 5
             log="$(adb logcat -d)"
             [ "$(echo "$log" | grep -c "yt-dlp retenu")" -ge 2 ] && break
-            echo "$log" | grep -q "yt-dlp (Android) indisponible\|mise à jour de yt-dlp impossible" && break
+            echo "$log" | grep -q "yt-dlp (Android) indisponible\|mise à jour de yt-dlp impossible\|aucune copie de yt-dlp ne répond" && break
           done
           sleep 5
           adb exec-out screencap -p > screenshot-android.png
           adb logcat -d > logcat.txt
           grep -E "orpheus|Orpheus|yt-dlp|qml|AndroidRuntime" logcat.txt | tail -80
-          if [ -z "$(adb shell pidof $pkg)" ]; then
+          pid="$(adb shell pidof $pkg | tr -d '\r')"
+          if [ -z "$pid" ]; then
             echo "::error::Orpheus s'est arrêté"; grep -E "FATAL|AndroidRuntime|DEBUG" logcat.txt | tail -60; exit 1
           fi
-          grep -q "yt-dlp retenu" logcat.txt || { echo "::error::yt-dlp (Python embarqué) n'a pas répondu"; exit 1; }
+          if ! grep -q "yt-dlp retenu" logcat.txt; then
+            echo "--- Logs complets du processus ($pid) ---"
+            adb logcat -d --pid="$pid" | tail -100
+            echo "::error::yt-dlp (Python embarqué) n'a pas répondu"
+            exit 1
+          fi
           if grep "mise à jour de yt-dlp impossible" logcat.txt; then echo "::error::mise à jour de yt-dlp impossible"; exit 1; fi
           echo "Orpheus démarré, yt-dlp opérationnel et à jour : $(grep "yt-dlp retenu" logcat.txt | tail -1 | sed 's/.*retenu : //')"
           SH

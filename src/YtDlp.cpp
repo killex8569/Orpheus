@@ -190,6 +190,9 @@ void YtDlp::selectNewest(std::function<void(QString)> cb)
 #endif
     redetect();
     if (m_candidates.isEmpty()) {
+#ifdef Q_OS_ANDROID
+        qWarning() << "yt-dlp (Android) introuvable après initialisation :" << AndroidBridge::ytdlpLaunch().script;
+#endif
         m_bin.clear();
         cb({});
         return;

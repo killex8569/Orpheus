@@ -11,17 +11,12 @@ namespace {
 constexpr char kClass[] = "io/github/killex8569/orpheus/OrpheusAndroid";
 constexpr char kCtxToString[] = "(Landroid/content/Context;)Ljava/lang/String;";
 
-jobject context()
-{
-    // Référence gardée toute la vie de l'application : celle d'un objet temporaire serait
-    // libérée avant l'appel Java (Context nul côté Java).
-    static const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
-    return ctx.object();
-}
-
 QString callString(const char *method)
 {
-    return QJniObject::callStaticObjectMethod(kClass, method, kCtxToString, context()).toString();
+    // Référence locale gardée le temps de l'appel, relue à chaque fois pour ne pas
+    // pointer vers une Activity détruite si Android recrée QtActivity.
+    const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    return QJniObject::callStaticObjectMethod(kClass, method, kCtxToString, ctx.object()).toString();
 }
 
 // Appel Java bloquant (décompression, réseau) dans un thread de travail ; réponse dans
@@ -83,24 +78,28 @@ void updateYtDlp(QObject *receiver, std::function<void(QString, bool)> done)
 
 void setMulticastLock(bool on)
 {
-    QJniObject::callStaticMethod<void>(kClass, "setMulticastLock", "(Landroid/content/Context;Z)V", context(), jboolean(on));
+    const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    QJniObject::callStaticMethod<void>(kClass, "setMulticastLock", "(Landroid/content/Context;Z)V", ctx.object(), jboolean(on));
 }
 
 void updateMedia(const QString &title, const QString &artist, bool playing)
 {
+    const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
     QJniObject::callStaticMethod<void>(kClass, "updateMedia", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Z)V",
-                                       context(), QJniObject::fromString(title).object<jstring>(),
+                                       ctx.object(), QJniObject::fromString(title).object<jstring>(),
                                        QJniObject::fromString(artist).object<jstring>(), jboolean(playing));
 }
 
 void requestNotificationPermission()
 {
-    QJniObject::callStaticMethod<void>(kClass, "requestNotificationPermission", "(Landroid/content/Context;)V", context());
+    const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    QJniObject::callStaticMethod<void>(kClass, "requestNotificationPermission", "(Landroid/content/Context;)V", ctx.object());
 }
 
 void moveTaskToBack()
 {
-    QJniObject::callStaticMethod<void>(kClass, "moveTaskToBack", "(Landroid/content/Context;)V", context());
+    const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    QJniObject::callStaticMethod<void>(kClass, "moveTaskToBack", "(Landroid/content/Context;)V", ctx.object());
 }
 
 }  // namespace AndroidBridge
