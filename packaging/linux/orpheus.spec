@@ -1,7 +1,7 @@
 # Paquet RPM d'Orpheus (Fedora). Construit par .github/workflows/installers.yml :
-#   rpmbuild -ba -D "orpheus_version 1.3.3" packaging/linux/orpheus.spec
+#   rpmbuild -ba -D "orpheus_version 1.3.4" packaging/linux/orpheus.spec
 # avec l'archive des sources orpheus-<version>.tar.gz dans le dossier SOURCES.
-%{!?orpheus_version: %global orpheus_version 1.3.3}
+%{!?orpheus_version: %global orpheus_version 1.3.4}
 %bcond_without tests
 
 Name:           orpheus
@@ -69,6 +69,11 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/orpheus.desktop
 %{_datadir}/icons/hicolor/scalable/apps/orpheus.svg
 
 %changelog
+* Fri Nov 27 2026 tristanroux - 1.3.4-1
+- Android : contexte Activity/ApplicationContext relu à chaque appel JNI
+  pour survivre au relancement de QtActivity, et stabilisation du test CI
+  émulateur Android 15
+
 * Thu Nov 26 2026 tristanroux - 1.3.3-1
 - Android : suppression des boucles de mise en page QML dans la barre de
   styles et le dialogue des tags
