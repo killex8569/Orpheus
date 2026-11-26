@@ -152,6 +152,7 @@ jobs:
 
       - name: Compilation et tests
         run: |
+          export PKG_CONFIG_PATH="$(brew --prefix libarchive)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
           cmake -S . -B build -G Ninja -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
           cmake --build build
           ./build/orpheus_tests -silent

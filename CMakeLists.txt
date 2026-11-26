@@ -31,6 +31,14 @@ elseif(WIN32)
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+    # Homebrew (macOS) : mpv.pc dépend de libarchive (keg-only) ; sans PKG_CONFIG_PATH,
+    # pkg-config trouve la version mais renvoie des flags vides. Repli direct sur les fichiers.
+    if(APPLE AND NOT MPV_INCLUDE_DIRS)
+        find_path(MPV_INCLUDE_DIR mpv/client.h HINTS /opt/homebrew/include /usr/local/include REQUIRED)
+        find_library(MPV_LIBRARY NAMES mpv HINTS /opt/homebrew/lib /usr/local/lib REQUIRED)
+        target_include_directories(PkgConfig::MPV INTERFACE "${MPV_INCLUDE_DIR}")
+        target_link_libraries(PkgConfig::MPV INTERFACE "${MPV_LIBRARY}")
+    endif()
 endif()
 
 qt_standard_project_setup(REQUIRES 6.5)
