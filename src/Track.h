@@ -24,6 +24,8 @@ struct Track {
     qint64 playCount = 0;
     qint64 lastPlayed = 0;
     qint64 addedAt = 0;
+    qint64 playlistAddedAt = 0;
+    int playlistPosition = 0;
 
     // Fichier local réellement présent sur le disque ?
     bool isLocal() const { return state == QLatin1String("ready") && !filePath.isEmpty() && QFileInfo::exists(filePath); }

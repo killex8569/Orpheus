@@ -373,15 +373,14 @@ void Backend::play(const QString &list, int row)
         return;
     }
     if (list == "playlist") {
-        // Toute la playlist est lue, même filtrée : on part du morceau choisi.
-        const QList<Track> all = m_db.playlistTracks(m_currentPlaylistId);
+        // Toute la playlist est lue (tri respecté) : on part du morceau choisi.
+        const QList<Track> all = orderedPlaylistTracks(m_currentPlaylistId);
         int start = row;
-        if (!m_playlistFilter.isEmpty())
-            for (int i = 0; i < all.size(); ++i)
-                if (all[i].id == t->id) {
-                    start = i;
-                    break;
-                }
+        for (int i = 0; i < all.size(); ++i)
+            if (all[i].id == t->id) {
+                start = i;
+                break;
+            }
         m_playingPlaylistId = m_currentPlaylistId;
         m_player->playList(all, start, m_player->shuffle());
         return;
@@ -492,7 +491,7 @@ void Backend::trackAction(const QString &list, int row, const QString &action, c
             return;
         if (list == "queue") {
             m_player->moveItem(row, to);
-        } else if (list == "playlist" && m_playlistFilter.isEmpty()) {
+        } else if (list == "playlist" && m_playlistFilter.isEmpty() && m_playlistSort == QLatin1String("order")) {
             m_db.moveInPlaylist(m_currentPlaylistId, t.id, to);
             openPlaylist(m_currentPlaylistId);
         }
@@ -596,13 +595,63 @@ qint64 Backend::createPlaylist(const QString &name, const QString &addFromList, 
     return id;
 }
 
+void Backend::sortPlaylistTracks(QList<Track> &tracks, const QString &sort) const
+{
+    if (sort == QLatin1String("order") || sort.isEmpty())
+        return;
+
+    auto norm = [](const QString &s) { return Matcher::normalize(s); };
+    std::stable_sort(tracks.begin(), tracks.end(), [&](const Track &a, const Track &b) {
+        if (sort == QLatin1String("added_desc"))
+            return a.playlistAddedAt != b.playlistAddedAt ? a.playlistAddedAt > b.playlistAddedAt
+                                                          : a.playlistPosition > b.playlistPosition;
+        if (sort == QLatin1String("added_asc"))
+            return a.playlistAddedAt != b.playlistAddedAt ? a.playlistAddedAt < b.playlistAddedAt
+                                                          : a.playlistPosition < b.playlistPosition;
+        if (sort == QLatin1String("title_asc"))
+            return norm(a.title) < norm(b.title);
+        if (sort == QLatin1String("title_desc"))
+            return norm(a.title) > norm(b.title);
+        if (sort == QLatin1String("artist_asc")) {
+            const QString aa = norm(a.artist), ba = norm(b.artist);
+            if (aa != ba)
+                return aa < ba;
+            const QString al = norm(a.album), bl = norm(b.album);
+            return al != bl ? al < bl : norm(a.title) < norm(b.title);
+        }
+        if (sort == QLatin1String("album_asc")) {
+            const QString al = norm(a.album), bl = norm(b.album);
+            if (al.isEmpty() != bl.isEmpty())
+                return bl.isEmpty();
+            return al != bl ? al < bl : norm(a.title) < norm(b.title);
+        }
+        if (sort == QLatin1String("duration_asc"))
+            return a.duration < b.duration;
+        if (sort == QLatin1String("duration_desc"))
+            return a.duration > b.duration;
+        if (sort == QLatin1String("plays_desc"))
+            return a.playCount != b.playCount ? a.playCount > b.playCount : norm(a.title) < norm(b.title);
+        return false;
+    });
+}
+
+QList<Track> Backend::orderedPlaylistTracks(qint64 id) const
+{
+    QList<Track> tracks = m_db.playlistTracks(id);
+    const QString sort = m_db.setting(QStringLiteral("playlist_sort_%1").arg(id), QStringLiteral("order"));
+    sortPlaylistTracks(tracks, sort);
+    return tracks;
+}
+
 void Backend::openPlaylist(qint64 id)
 {
     const auto p = m_db.playlist(id);
     if (!p)
         return;
-    if (id != m_currentPlaylistId)
+    if (id != m_currentPlaylistId) {
         m_playlistFilter.clear();
+        m_playlistSort = m_db.setting(QStringLiteral("playlist_sort_%1").arg(id), QStringLiteral("order"));
+    }
     m_currentPlaylistId = id;
     m_currentPlaylist = p->toMap();
     if (p->kind == "user" && id != m_targetPlaylistId) {
@@ -612,6 +661,7 @@ void Backend::openPlaylist(qint64 id)
         emit playlistsChanged();
     }
     QList<Track> tracks = m_db.playlistTracks(id);
+    sortPlaylistTracks(tracks, m_playlistSort);
     if (!m_playlistFilter.isEmpty()) {
         const QStringList words = Matcher::normalize(m_playlistFilter).split(' ', Qt::SkipEmptyParts);
         tracks.removeIf([&words](const Track &t) {
@@ -633,9 +683,25 @@ void Backend::filterPlaylist(const QString &text)
         openPlaylist(m_currentPlaylistId);
 }
 
+void Backend::setPlaylistSort(const QString &sort)
+{
+    const QString clean = sort.trimmed().isEmpty() ? QStringLiteral("order") : sort.trimmed();
+    if (clean == m_playlistSort)
+        return;
+    m_playlistSort = clean;
+    if (m_currentPlaylistId > 0) {
+        const QString key = QStringLiteral("playlist_sort_%1").arg(m_currentPlaylistId);
+        if (clean == QLatin1String("order"))
+            m_db.removeSetting(key);
+        else
+            m_db.setSetting(key, clean);
+        openPlaylist(m_currentPlaylistId);
+    }
+}
+
 void Backend::playPlaylist(qint64 id, bool shuffleOn)
 {
-    auto tracks = m_db.playlistTracks(id);
+    auto tracks = orderedPlaylistTracks(id);
     if (tracks.isEmpty()) {
         emit toast(QStringLiteral("Playlist vide"), true);
         return;

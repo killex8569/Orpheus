@@ -366,6 +366,13 @@ void Importer::importTracks(qint64 jobId, const QString &kind, const QString &re
             });
         },
         [this, st, playlistId, done] {
+            QList<qint64> orderedIds;
+            orderedIds.reserve(st->results.size());
+            for (const auto &r : std::as_const(st->results))
+                if (r && r->id > 0 && !orderedIds.contains(r->id))
+                    orderedIds.append(r->id);
+            if (!orderedIds.isEmpty())
+                m_db->reorderPlaylistTracks(playlistId, orderedIds);
             st->job.status = "done";
             st->job.message = st->missing.isEmpty() ? QString() : "Introuvables : " + st->missing.join(" · ");
             m_db->updateJob(st->job);

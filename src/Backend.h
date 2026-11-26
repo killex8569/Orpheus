@@ -32,6 +32,7 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantMap currentPlaylist READ currentPlaylist NOTIFY currentPlaylistChanged)
     // Texte de la barre de recherche de la playlist ouverte ("" = tous les morceaux).
     Q_PROPERTY(QString playlistFilter READ playlistFilter NOTIFY currentPlaylistChanged)
+    Q_PROPERTY(QString playlistSort READ playlistSort NOTIFY currentPlaylistChanged)
     Q_PROPERTY(QVariantList jobs READ jobs NOTIFY jobsChanged)
     Q_PROPERTY(bool searching READ searching NOTIFY searchChanged)
     Q_PROPERTY(QString searchError READ searchError NOTIFY searchChanged)
@@ -105,6 +106,7 @@ public:
     QVariantList playlists() const { return m_playlists; }
     QVariantMap currentPlaylist() const { return m_currentPlaylist; }
     QString playlistFilter() const { return m_playlistFilter; }
+    QString playlistSort() const { return m_playlistSort; }
     QVariantList jobs() const { return m_jobs; }
     bool searching() const { return m_searching; }
     QString searchError() const { return m_searchError; }
@@ -185,6 +187,7 @@ public:
     // Filtre la playlist ouverte : chaque mot doit apparaître dans le titre, l'artiste
     // ou l'album (sans tenir compte de la casse ni des accents).
     Q_INVOKABLE void filterPlaylist(const QString &text);
+    Q_INVOKABLE void setPlaylistSort(const QString &sort);
     Q_INVOKABLE void playPlaylist(qint64 id, bool shuffle);
     // Bouton « Aléatoire » d'une playlist : active/désactive le mélange de toute la playlist.
     Q_INVOKABLE void shufflePlaylist(qint64 id);
@@ -258,6 +261,8 @@ private:
     void scheduleRefresh();
     void setTargetPlaylist(qint64 id);
     void updateMarks();
+    QList<Track> orderedPlaylistTracks(qint64 id) const;
+    void sortPlaylistTracks(QList<Track> &tracks, const QString &sort) const;
     // Ajoute des morceaux à la file du Jam (après résolution si besoin).
     void addToJam(const QList<Track> &tracks);
     // Dossier choisi (chemin ou URL file://) vérifié : absolu, hors données d'Orpheus,
@@ -285,6 +290,7 @@ private:
     QVariantMap m_currentPlaylist;
     qint64 m_currentPlaylistId = 0;
     QString m_playlistFilter;
+    QString m_playlistSort = QStringLiteral("order");
     qint64 m_playingPlaylistId = 0;
     qint64 m_targetPlaylistId = 0;
     bool m_searching = false;

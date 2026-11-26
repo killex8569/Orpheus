@@ -619,10 +619,21 @@ QList<Track> Database::playlistTracks(qint64 id) const
     QStringList cols;
     for (const QString &c : QString(kTrackCols).split(", "))
         cols << "t." + c;
-    return queryTracks(QStringLiteral("SELECT %1 FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id "
+    const int extraColStart = int(cols.size());
+    QSqlQuery q = exec(db(),
+                       QStringLiteral("SELECT %1, pt.added_at, pt.position FROM playlist_tracks pt "
+                                      "JOIN tracks t ON t.id = pt.track_id "
                                       "WHERE pt.playlist_id = ? ORDER BY pt.position")
                            .arg(cols.join(", ")),
                        {id});
+    QList<Track> out;
+    while (q.next()) {
+        Track t = trackFromQuery(q);
+        t.playlistAddedAt = q.value(extraColStart).toLongLong();
+        t.playlistPosition = q.value(extraColStart + 1).toInt();
+        out.append(t);
+    }
+    return out;
 }
 
 void Database::addToPlaylist(qint64 playlistId, qint64 trackId)
@@ -670,6 +681,38 @@ void Database::moveInPlaylist(qint64 playlistId, qint64 trackId, int newIndex)
     d.transaction();
     for (int i = 0; i < ids.size(); ++i)
         exec(d, "UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND track_id = ?", {i + 1, playlistId, ids[i]});
+    d.commit();
+}
+
+void Database::reorderPlaylistTracks(qint64 playlistId, const QList<qint64> &orderedTrackIds)
+{
+    const QList<Track> existing = playlistTracks(playlistId);
+    if (existing.isEmpty())
+        return;
+    QSet<qint64> present;
+    for (const Track &t : existing)
+        present.insert(t.id);
+
+    QList<qint64> finalOrder;
+    QSet<qint64> seen;
+    for (qint64 id : orderedTrackIds) {
+        if (present.contains(id) && !seen.contains(id)) {
+            finalOrder.append(id);
+            seen.insert(id);
+        }
+    }
+    for (const Track &t : existing) {
+        if (!seen.contains(t.id)) {
+            finalOrder.append(t.id);
+            seen.insert(t.id);
+        }
+    }
+
+    QSqlDatabase d = db();
+    d.transaction();
+    for (int i = 0; i < finalOrder.size(); ++i)
+        exec(d, "UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND track_id = ?",
+             {i + 1, playlistId, finalOrder[i]});
     d.commit();
 }
 

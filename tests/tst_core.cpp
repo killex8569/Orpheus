@@ -730,6 +730,34 @@ private slots:
         QVERIFY(reopened.open(path, nullptr));
         QCOMPARE(names(reopened), QStringList({"Bossa", "zouk", "Metal", "Ambient", "Cache local"}));
     }
+
+    void playlistSyncReorder()
+    {
+        QTemporaryDir dir;
+        Database db;
+        QVERIFY(db.open(dir.filePath("r.db"), nullptr));
+        const qint64 pl = db.createPlaylist("Titres likés (Spotify)", "spotify", "playlist:liked");
+        const Track t1 = db.upsertTrack(input("11111111111", "A", "Old 1"));
+        const Track t2 = db.upsertTrack(input("22222222222", "B", "Old 2"));
+        const Track tManual = db.upsertTrack(input("33333333333", "C", "Manual extra"));
+        db.addToPlaylist(pl, t1.id);
+        db.addToPlaylist(pl, t2.id);
+        db.addToPlaylist(pl, tManual.id);
+
+        // Nouveau titre liké ajouté en tête lors de la synchro.
+        const Track tNew = db.upsertTrack(input("44444444444", "D", "Newly Liked"));
+        db.addToPlaylist(pl, tNew.id);
+        db.reorderPlaylistTracks(pl, {tNew.id, t1.id, t2.id});
+
+        const QList<Track> got = db.playlistTracks(pl);
+        QCOMPARE(got.size(), 4);
+        QCOMPARE(got[0].id, tNew.id);
+        QCOMPARE(got[1].id, t1.id);
+        QCOMPARE(got[2].id, t2.id);
+        QCOMPARE(got[3].id, tManual.id);
+        QVERIFY(got[0].playlistAddedAt > 0);
+        QCOMPARE(got[0].playlistPosition, 1);
+    }
 };
 
 QTEST_GUILESS_MAIN(CoreTest)

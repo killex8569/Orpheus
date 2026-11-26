@@ -8,6 +8,22 @@ Item {
     readonly property var p: backend.currentPlaylist
     readonly property bool isCache: p.kind === "cache"
     readonly property bool filtering: backend.playlistFilter !== ""
+    readonly property var sortOptions: [
+        { key: "order", label: "Ordre d'origine" },
+        { key: "added_desc", label: "Ajouts récents" },
+        { key: "added_asc", label: "Ajouts anciens" },
+        { key: "title_asc", label: "Titre (A → Z)" },
+        { key: "title_desc", label: "Titre (Z → A)" },
+        { key: "artist_asc", label: "Artiste (A → Z)" },
+        { key: "album_asc", label: "Album (A → Z)" },
+        { key: "duration_asc", label: "Durée (courte → longue)" },
+        { key: "duration_desc", label: "Durée (longue → courte)" },
+        { key: "plays_desc", label: "Plus écoutés" }
+    ]
+    readonly property string currentSortLabel: {
+        const hit = sortOptions.find(o => o.key === backend.playlistSort)
+        return hit ? hit.label : "Ordre d'origine"
+    }
     function focusFilter() { filterField.forceActiveFocus(); filterField.selectAll() }
 
     // Nouvelle playlist ouverte : la recherche repart de zéro.
@@ -114,15 +130,15 @@ Item {
             }
         }
 
-        // Recherche dans la playlist (titre, artiste, album).
-        RowLayout {
+        // Recherche et tri dans la playlist.
+        Flow {
+            id: searchSortBar
             Layout.fillWidth: true
-            spacing: 12
+            spacing: 10
             visible: (root.p.trackCount || 0) > 0
             TextField {
                 id: filterField
-                Layout.fillWidth: true
-                Layout.maximumWidth: 420
+                width: Math.min(360, searchSortBar.width)
                 implicitHeight: 38
                 placeholderText: "Rechercher dans la playlist"
                 placeholderTextColor: OTheme.muted
@@ -151,8 +167,31 @@ Item {
                 // Petite attente : la liste n'est pas recalculée à chaque lettre.
                 Timer { id: filterTimer; interval: 150; onTriggered: backend.filterPlaylist(filterField.text) }
             }
+            PillButton {
+                id: sortBtn
+                text: "Tri : " + root.currentSortLabel
+                iconName: "chevron-down"
+                implicitHeight: 38
+                checked: backend.playlistSort !== "order"
+                onClicked: sortMenu.popup(sortBtn, 0, sortBtn.height + 4)
+                Menu {
+                    id: sortMenu
+                    Repeater {
+                        model: root.sortOptions
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: modelData.label
+                            checkable: true
+                            checked: backend.playlistSort === modelData.key
+                            onTriggered: backend.setPlaylistSort(modelData.key)
+                        }
+                    }
+                }
+            }
             Text {
                 visible: root.filtering
+                height: 38
+                verticalAlignment: Text.AlignVCenter
                 text: backend.playlistTracks.count + " résultat" + (backend.playlistTracks.count > 1 ? "s" : "")
                 color: OTheme.muted
                 font.pixelSize: 13
@@ -163,8 +202,8 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             listName: "playlist"
-            // Pas de réordonnancement sur une liste filtrée (positions ambiguës).
-            editable: !root.isCache && !root.filtering
+            // Pas de réordonnancement sur une liste filtrée ou triée (positions ambiguës).
+            editable: !root.isCache && !root.filtering && backend.playlistSort === "order"
             model: backend.playlistTracks
             emptyText: root.filtering ? "Aucun morceau ne correspond à « " + backend.playlistFilter + " »."
                      : root.isCache ? "Les morceaux que vous écoutez apparaîtront ici."

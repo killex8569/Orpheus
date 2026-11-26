@@ -138,6 +138,8 @@ public:
     QHash<qint64, bool> playlistsContaining(qint64 trackId, const QString &matchKey) const;
     void removeFromPlaylist(qint64 playlistId, qint64 trackId);
     void moveInPlaylist(qint64 playlistId, qint64 trackId, int newIndex);
+    // Réordonne les morceaux d'une playlist selon orderedTrackIds (les éventuels autres suivent).
+    void reorderPlaylistTracks(qint64 playlistId, const QList<qint64> &orderedTrackIds);
 
     // Imports
     qint64 createJob(const QString &source, const QString &name);
